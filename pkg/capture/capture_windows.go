@@ -81,18 +81,18 @@ func newPlatformCapture() ScreenCapture {
 
 // CaptureWindowByPID captures window by process ID
 func (w *WindowsCapture) CaptureWindowByPID(pid uint32, options *CaptureOptions) (image.Image, error) {
-	windows, err := w.GetWindowsByPID(pid)
+	windowsByPID, err := w.GetWindowsByPID(pid)
 	if err != nil {
-		return nil, utils.WrapError(err, "failed to get windows")
+		return nil, utils.WrapError(err, "failed to get windowsByPID")
 	}
 
-	if len(windows) == 0 {
+	if len(windowsByPID) == 0 {
 		return nil, utils.ErrWindowNotFound
 	}
 
 	// Use main window or first visible window
 	var targetWindow *WindowInfo
-	for _, win := range windows {
+	for _, win := range windowsByPID {
 		if w.isWindowVisible(win.Handle) {
 			targetWindow = &win
 			break
@@ -100,7 +100,7 @@ func (w *WindowsCapture) CaptureWindowByPID(pid uint32, options *CaptureOptions)
 	}
 
 	if targetWindow == nil {
-		targetWindow = &windows[0]
+		targetWindow = &windowsByPID[0]
 	}
 
 	return w.CaptureWindowByHandle(targetWindow.Handle, options)

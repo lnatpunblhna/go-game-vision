@@ -37,10 +37,14 @@ func main() {
 		}
 		processName := os.Args[2]
 		outputFile := "capture.png"
+		windowTitle := ""
 		if len(os.Args) >= 4 {
 			outputFile = os.Args[3]
 		}
-		captureWindow(processName, outputFile)
+		if len(os.Args) >= 5 {
+			windowTitle = os.Args[4]
+		}
+		captureWindow(processName, outputFile, windowTitle)
 	case "help":
 		showUsage()
 	default:
@@ -81,7 +85,7 @@ func listProcesses() {
 	}
 }
 
-func captureWindow(processName, outputFile string) {
+func captureWindow(processName, outputFile, windowTitle string) {
 	fmt.Printf("Searching for process: %s\n", processName)
 
 	// Find process
@@ -118,6 +122,7 @@ func captureWindow(processName, outputFile string) {
 		Format:        capture.PNG,
 		Quality:       90,
 		IncludeHidden: true,
+		WindowTitle:   windowTitle,
 	}
 
 	fmt.Println("Capturing window...")

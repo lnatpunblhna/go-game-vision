@@ -37,6 +37,7 @@ type CaptureOptions struct {
 	Format        ImageFormat // Image format
 	Quality       int         // JPEG quality (1-100)
 	IncludeHidden bool        // Whether to include hidden window content
+	WindowTitle   string      // Window title to capture (optional)
 }
 
 // DefaultCaptureOptions default screenshot options
