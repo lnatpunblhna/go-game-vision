@@ -62,18 +62,6 @@ type ScreenCapture interface {
 	// CaptureWindowByPID captures window by process ID
 	CaptureWindowByPID(pid uint32, options *CaptureOptions) (image.Image, error)
 
-	// CaptureWindowByHandle captures window by window handle
-	CaptureWindowByHandle(handle uintptr, options *CaptureOptions) (image.Image, error)
-
-	// CaptureScreen captures entire screen
-	CaptureScreen(options *CaptureOptions) (image.Image, error)
-
-	// GetWindowsByPID gets all windows by process ID
-	GetWindowsByPID(pid uint32) ([]WindowInfo, error)
-
-	// GetMainWindowByPID gets main window by process ID
-	GetMainWindowByPID(pid uint32) (*WindowInfo, error)
-
 	// SaveImage saves image to file
 	SaveImage(img image.Image, filename string, format ImageFormat, quality int) error
 }

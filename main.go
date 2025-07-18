@@ -99,24 +99,6 @@ func captureWindow(processName, outputFile, windowTitle string) {
 	// Create capturer
 	capturer := capture.NewScreenCapture()
 
-	// Get window information
-	windows, err := capturer.GetWindowsByPID(pid)
-	if err != nil {
-		log.Fatalf("Failed to get window information: %v", err)
-	}
-
-	if len(windows) == 0 {
-		log.Fatalf("Process %s (PID: %d) has no visible windows", processName, pid)
-	}
-
-	fmt.Printf("Found %d windows\n", len(windows))
-	for i, win := range windows {
-		if i >= 3 { // Only show first 3
-			break
-		}
-		fmt.Printf("  Window %d: %s\n", i+1, win.Title)
-	}
-
 	// Capture options
 	options := &capture.CaptureOptions{
 		Format:        capture.PNG,
