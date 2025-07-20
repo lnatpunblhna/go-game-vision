@@ -28,12 +28,6 @@ A cross-platform Go project that implements program window capture functionality
   - Histogram Comparison
   - Structural Similarity
 
-### 📝 OCR Text Recognition Module
-- Integrates Gosseract library for OCR text recognition functionality
-- Provides methods to extract text from screenshots
-- Supports multi-language text recognition (English, Chinese, Japanese, Korean, etc.)
-- Configurable recognition options and parameters
-
 ## System Requirements
 
 ### Basic Requirements
@@ -42,12 +36,10 @@ A cross-platform Go project that implements program window capture functionality
 
 ### Dependencies
 - [GoCV](https://gocv.io/) - Go bindings for OpenCV (for image processing)
-- [Gosseract](https://github.com/otiai10/gosseract) - Go bindings for Tesseract OCR
 - golang.org/x/sys - System call support
 
 ### External Dependencies
 - **OpenCV**: Required for image processing functionality
-- **Tesseract OCR**: Required for text recognition functionality
 
 ## Installation Guide
 
@@ -189,21 +181,7 @@ fmt.Printf("Similarity: %.2f, Location: (%d, %d)\n",
     result.Similarity, result.Location.X, result.Location.Y)
 ```
 
-### OCR Recognition (pkg/ocr)
 
-```go
-// Create OCR engine
-engine := ocr.NewOCREngine()
-defer engine.Close()
-
-// Recognize text
-options := &ocr.OCROptions{
-    Language: ocr.Chinese,
-    PSM:      3,
-    OEM:      3,
-}
-result, err := engine.RecognizeTextFromFile("image.png", options)
-```
 
 ## Project Structure
 

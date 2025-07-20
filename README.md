@@ -28,12 +28,6 @@
   - 直方图对比（Histogram Comparison）
   - 结构相似性（Structural Similarity）
 
-### 📝 OCR文字识别模块
-- 集成Gosseract库实现OCR文字识别功能
-- 提供从截图中提取文字的方法
-- 支持多语言文字识别（英文、中文、日文、韩文等）
-- 可配置的识别选项和参数
-
 ## 系统要求
 
 ### 基础要求
@@ -42,12 +36,10 @@
 
 ### 依赖库
 - [GoCV](https://gocv.io/) - OpenCV的Go绑定（用于图像处理）
-- [Gosseract](https://github.com/otiai10/gosseract) - Tesseract OCR的Go绑定
 - golang.org/x/sys - 系统调用支持
 
 ### 外部依赖
 - **OpenCV**: 图像处理功能需要
-- **Tesseract OCR**: 文字识别功能需要
 
 ## 安装指南
 
@@ -67,14 +59,12 @@ go mod tidy
 #### Windows
 ```bash
 # 安装OpenCV (使用vcpkg或预编译版本)
-# 安装Tesseract OCR
-winget install UB-Mannheim.TesseractOCR
 ```
 
 #### macOS
 ```bash
 # 使用Homebrew安装
-brew install opencv tesseract
+brew install opencv
 ```
 
 ## 快速开始
@@ -189,21 +179,7 @@ fmt.Printf("相似度: %.2f, 位置: (%d, %d)\n",
     result.Similarity, result.Location.X, result.Location.Y)
 ```
 
-### OCR识别 (pkg/ocr)
 
-```go
-// 创建OCR引擎
-engine := ocr.NewOCREngine()
-defer engine.Close()
-
-// 识别文字
-options := &ocr.OCROptions{
-    Language: ocr.Chinese,
-    PSM:      3,
-    OEM:      3,
-}
-result, err := engine.RecognizeTextFromFile("image.png", options)
-```
 
 ## 项目结构
 

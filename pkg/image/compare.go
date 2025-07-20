@@ -1,8 +1,14 @@
 package image
 
 import (
+	"fmt"
 	"image"
+	"image/jpeg"
+	"image/png"
 	"math"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/lnatpunblhna/go-game-vision/pkg/utils"
 	"gocv.io/x/gocv"
@@ -243,6 +249,72 @@ func (ic *ImageComparer) structuralSimilarity(img1, img2 gocv.Mat) (*MatchResult
 	}, nil
 }
 
+// ParseCompareMethod 解析对比方法参数
+func (ic *ImageComparer) ParseCompareMethod(method string) CompareMethod {
+	switch strings.ToLower(method) {
+	case "template", "templatematching":
+		return TemplateMatching
+	case "feature", "featurematching":
+		return FeatureMatching
+	case "histogram", "histogramcomparison":
+		return HistogramComparison
+	case "similarity", "structural", "structuralsimilarity":
+		return StructuralSimilarity
+	default:
+		fmt.Printf("Warning: Unknown comparison method '%s', using template matching\n", method)
+		return TemplateMatching
+	}
+}
+
+// GetMethodName 获取对比方法名称
+func (ic *ImageComparer) GetMethodName(method CompareMethod) string {
+	switch method {
+	case TemplateMatching:
+		return "Template Matching"
+	case FeatureMatching:
+		return "Feature Matching"
+	case HistogramComparison:
+		return "Histogram Comparison"
+	case StructuralSimilarity:
+		return "Structural Similarity"
+	default:
+		return "Unknown"
+	}
+}
+
+// LoadImage 加载图像文件
+func (ic *ImageComparer) LoadImage(filename string) (image.Image, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, utils.WrapError(err, "打开图像文件失败")
+	}
+	defer file.Close()
+
+	// 根据文件扩展名选择解码器
+	ext := strings.ToLower(filepath.Ext(filename))
+	switch ext {
+	case ".jpg", ".jpeg":
+		img, err := jpeg.Decode(file)
+		if err != nil {
+			return nil, utils.WrapError(err, "解码JPEG图像失败")
+		}
+		return img, nil
+	case ".png":
+		img, err := png.Decode(file)
+		if err != nil {
+			return nil, utils.WrapError(err, "解码PNG图像失败")
+		}
+		return img, nil
+	default:
+		// 尝试自动检测格式
+		img, _, err := image.Decode(file)
+		if err != nil {
+			return nil, utils.WrapError(err, "解码图像失败")
+		}
+		return img, nil
+	}
+}
+
 // imageToMat 将Go image转换为OpenCV Mat
 func imageToMat(img image.Image) (gocv.Mat, error) {
 	bounds := img.Bounds()
@@ -272,7 +344,7 @@ func imageToMat(img image.Image) (gocv.Mat, error) {
 	return mat, nil
 }
 
-// 便捷函数
+// CompareImages 便捷函数
 func CompareImages(img1, img2 image.Image, method CompareMethod) (*MatchResult, error) {
 	comparer := NewImageComparer(method)
 	return comparer.CompareImages(img1, img2)

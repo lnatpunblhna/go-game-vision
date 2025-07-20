@@ -219,32 +219,6 @@ func (w *WindowsCapture) bitmapToImage(bitmap uintptr, width, height int) (image
 	return img, nil
 }
 
-// CaptureScreen Capture the entire screen
-func (w *WindowsCapture) CaptureScreen(options *CaptureOptions) (image.Image, error) {
-	screenDC, _, _ := procGetDC.Call(0)
-	defer procReleaseDC.Call(0, screenDC)
-
-	widthRet, _, _ := procGetSystemMetrics.Call(SM_CXSCREEN)
-	heightRet, _, _ := procGetSystemMetrics.Call(SM_CYSCREEN)
-	width := int(widthRet)
-	height := int(heightRet)
-
-	memDC, _, _ := procCreateCompatibleDC.Call(screenDC)
-	defer procDeleteDC.Call(memDC)
-
-	bitmap, _, _ := procCreateCompatibleBitmap.Call(screenDC, uintptr(width), uintptr(height))
-	defer procDeleteObject.Call(bitmap)
-
-	procSelectObject.Call(memDC, bitmap)
-
-	ret, _, _ := procBitBlt.Call(memDC, 0, 0, uintptr(width), uintptr(height), screenDC, 0, 0, SRCCOPY)
-	if ret == 0 {
-		return nil, fmt.Errorf("failed to capture screen")
-	}
-
-	return w.bitmapToImage(bitmap, width, height)
-}
-
 // GetWindowsByPID gets all windows by process ID
 func (w *WindowsCapture) GetWindowsByPID(pid uint32) ([]WindowInfo, error) {
 	var windowInfos []WindowInfo
@@ -269,28 +243,6 @@ func (w *WindowsCapture) GetWindowsByPID(pid uint32) ([]WindowInfo, error) {
 
 	procEnumWindows.Call(callback, 0)
 	return windowInfos, nil
-}
-
-// GetMainWindowByPID gets main window by process ID
-func (w *WindowsCapture) GetMainWindowByPID(pid uint32) (*WindowInfo, error) {
-	windowsByPID, err := w.GetWindowsByPID(pid)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(windowsByPID) == 0 {
-		return nil, utils.ErrWindowNotFound
-	}
-
-	// Find the visible main window
-	for _, win := range windowsByPID {
-		if w.isWindowVisible(win.Handle) && win.Title != "" {
-			return &win, nil
-		}
-	}
-
-	// If no visible window found, return the first one
-	return &windowsByPID[0], nil
 }
 
 // SaveImage saves image to file

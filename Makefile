@@ -1,10 +1,40 @@
 # Go Game Vision Makefile
 
+# Detect operating system
+ifeq ($(OS),Windows_NT)
+    DETECTED_OS := Windows
+    EXE_EXT := .exe
+    RM := del /Q
+    RMDIR := rmdir /S /Q
+    MKDIR := mkdir
+    COPY := copy
+    XCOPY := xcopy /E /I /Y
+    PATH_SEP := \\
+    INSTALL_DIR := $(USERPROFILE)\\bin
+    ARCHIVE_CMD := powershell Compress-Archive -Path
+    ARCHIVE_EXT := .zip
+else
+    DETECTED_OS := $(shell uname -s)
+    EXE_EXT :=
+    RM := rm -f
+    RMDIR := rm -rf
+    MKDIR := mkdir -p
+    COPY := cp
+    XCOPY := cp -r
+    PATH_SEP := /
+    ifeq ($(DETECTED_OS),Darwin)
+        INSTALL_DIR := /usr/local/bin
+    else
+        INSTALL_DIR := /usr/local/bin
+    endif
+    ARCHIVE_CMD := tar -czf
+    ARCHIVE_EXT := .tar.gz
+endif
+
 # Variable definitions
 BINARY_NAME=go-game-vision
 MAIN_PATH=./main.go
 BUILD_DIR=./build
-EXAMPLES_DIR=./examples
 TESTS_DIR=./tests
 
 # Go related variables
@@ -16,43 +46,84 @@ GOGET=$(GOCMD) get
 GOMOD=$(GOCMD) mod
 
 # Build flags
-BUILD_FLAGS=-ldflags="-s -w"
+BUILD_FLAGS=-ldflags "-s -w"
 WINDOWS_FLAGS=GOOS=windows GOARCH=amd64
 DARWIN_FLAGS=GOOS=darwin GOARCH=amd64
+LINUX_FLAGS=GOOS=linux GOARCH=amd64
 
-.PHONY: all build clean test deps help run examples
+# Platform-specific binary names
+BINARY_LOCAL=$(BINARY_NAME)$(EXE_EXT)
+BINARY_WINDOWS=$(BINARY_NAME)-windows.exe
+BINARY_DARWIN=$(BINARY_NAME)-darwin
+BINARY_LINUX=$(BINARY_NAME)-linux
+
+.PHONY: all build clean test deps help run examples build-windows build-darwin build-linux build-all install uninstall release test-makefile show-env show-cgo-env test-cgo example-compare examples-all test-cli demo
 
 # Default target
 all: clean deps test build
 
-# Build project
+# Build project for current platform (CGO disabled)
 build:
-	@echo "Building project..."
-	@mkdir -p $(BUILD_DIR)
-	$(GOBUILD) $(BUILD_FLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_PATH)
-	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)"
+	@echo "Building project for $(DETECTED_OS) with CGO disabled..."
+ifeq ($(OS),Windows_NT)
+	@if not exist $(BUILD_DIR) $(MKDIR) $(BUILD_DIR)
+	@powershell -Command "$(GOBUILD) -ldflags \"-s -w\" -o $(BUILD_DIR)/$(BINARY_LOCAL) $(MAIN_PATH)"
+	@echo "Build complete: $(BUILD_DIR)/$(BINARY_LOCAL)"
+else
+	@$(MKDIR) $(BUILD_DIR)
+	$(GOBUILD) $(BUILD_FLAGS) -o $(BUILD_DIR)/$(BINARY_LOCAL) $(MAIN_PATH)
+	@echo "Build complete: $(BUILD_DIR)/$(BINARY_LOCAL)"
+endif
 
-# Cross-platform build
+# Cross-platform builds
 build-windows:
-	@echo "Building Windows version..."
-	@mkdir -p $(BUILD_DIR)
-	$(WINDOWS_FLAGS) $(GOBUILD) $(BUILD_FLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows.exe $(MAIN_PATH)
-	@echo "Windows build complete: $(BUILD_DIR)/$(BINARY_NAME)-windows.exe"
+	@echo "Building Windows version with CGO disabled..."
+ifeq ($(OS),Windows_NT)
+	@if not exist $(BUILD_DIR) $(MKDIR) $(BUILD_DIR)
+	@powershell -Command "$$env:GOOS='windows'; $$env:GOARCH='amd64';$(GOBUILD) -ldflags \"-s -w\" -o $(BUILD_DIR)/$(BINARY_WINDOWS) $(MAIN_PATH)"
+else
+	@$(MKDIR) $(BUILD_DIR)
+	$(WINDOWS_FLAGS) CGO_ENABLED=0 $(GOBUILD) $(BUILD_FLAGS) -o $(BUILD_DIR)/$(BINARY_WINDOWS) $(MAIN_PATH)
+endif
+	@echo "Windows build complete: $(BUILD_DIR)/$(BINARY_WINDOWS)"
 
 build-darwin:
-	@echo "Building macOS version..."
-	@mkdir -p $(BUILD_DIR)
-	$(DARWIN_FLAGS) $(GOBUILD) $(BUILD_FLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin $(MAIN_PATH)
-	@echo "macOS build complete: $(BUILD_DIR)/$(BINARY_NAME)-darwin"
+	@echo "Building macOS version with CGO disabled..."
+ifeq ($(OS),Windows_NT)
+	@if not exist $(BUILD_DIR) $(MKDIR) $(BUILD_DIR)
+	@powershell -Command "$$env:GOOS='darwin'; $$env:GOARCH='amd64';$(GOBUILD) -ldflags \"-s -w\" -o $(BUILD_DIR)/$(BINARY_DARWIN) $(MAIN_PATH)"
+else
+	@$(MKDIR) $(BUILD_DIR)
+	$(DARWIN_FLAGS) CGO_ENABLED=0 $(GOBUILD) $(BUILD_FLAGS) -o $(BUILD_DIR)/$(BINARY_DARWIN) $(MAIN_PATH)
+endif
+	@echo "macOS build complete: $(BUILD_DIR)/$(BINARY_DARWIN)"
 
-build-all: build-windows build-darwin
+build-linux:
+	@echo "Building Linux version with CGO disabled..."
+ifeq ($(OS),Windows_NT)
+	@if not exist $(BUILD_DIR) $(MKDIR) $(BUILD_DIR)
+	@powershell -Command "$$env:GOOS='linux'; $$env:GOARCH='amd64'; $(GOBUILD) -ldflags \"-s -w\" -o $(BUILD_DIR)/$(BINARY_LINUX) $(MAIN_PATH)"
+else
+	@$(MKDIR) $(BUILD_DIR)
+	$(LINUX_FLAGS) CGO_ENABLED=0 $(GOBUILD) $(BUILD_FLAGS) -o $(BUILD_DIR)/$(BINARY_LINUX) $(MAIN_PATH)
+endif
+	@echo "Linux build complete: $(BUILD_DIR)/$(BINARY_LINUX)"
+
+build-all: build-windows build-darwin build-linux
 	@echo "All platform builds complete"
 
 # Clean build files
 clean:
 	@echo "Cleaning build files..."
 	$(GOCLEAN)
-	@rm -rf $(BUILD_DIR)
+ifeq ($(OS),Windows_NT)
+	@if exist $(BUILD_DIR) $(RMDIR) $(BUILD_DIR) 2>nul || echo "Build directory already clean"
+	@if exist coverage.out $(RM) coverage.out 2>nul || echo ""
+	@if exist coverage.html $(RM) coverage.html 2>nul || echo ""
+else
+	@$(RMDIR) $(BUILD_DIR) 2>/dev/null || echo "Build directory already clean"
+	@$(RM) coverage.out coverage.html 2>/dev/null || true
+endif
 	@echo "Clean complete"
 
 # Install dependencies
@@ -68,22 +139,10 @@ test:
 	$(GOTEST) -v $(TESTS_DIR)/...
 	@echo "Tests complete"
 
-# Run tests and generate coverage report
-test-coverage:
-	@echo "Running tests and generating coverage report..."
-	$(GOTEST) -v -coverprofile=coverage.out $(TESTS_DIR)/...
-	$(GOCMD) tool cover -html=coverage.out -o coverage.html
-	@echo "Coverage report generated: coverage.html"
-
 # Run main program
 run:
 	@echo "Running main program..."
 	$(GOCMD) run $(MAIN_PATH) help
-
-# Run examples
-examples:
-	@echo "Running basic usage examples..."
-	$(GOCMD) run $(EXAMPLES_DIR)/basic_usage.go
 
 # Format code
 fmt:
@@ -97,60 +156,46 @@ vet:
 	$(GOCMD) vet ./...
 	@echo "Code check complete"
 
-# Install tools
-install-tools:
-	@echo "Installing development tools..."
-	$(GOGET) -u golang.org/x/tools/cmd/goimports
-	$(GOGET) -u github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-	@echo "Tools installation complete"
-
-# Code quality check
-lint:
-	@echo "Running code quality check..."
-	golangci-lint run
-	@echo "Code quality check complete"
-
 # Complete code check process
-check: fmt vet lint test
+check: fmt vet test
 	@echo "All checks complete"
-
-# Install to system
-install: build
-	@echo "Installing to system..."
-	@cp $(BUILD_DIR)/$(BINARY_NAME) /usr/local/bin/
-	@echo "Installation complete"
-
-# Uninstall
-uninstall:
-	@echo "Uninstalling from system..."
-	@rm -f /usr/local/bin/$(BINARY_NAME)
-	@echo "Uninstallation complete"
 
 # Create release package
 release: clean build-all
 	@echo "Creating release package..."
-	@mkdir -p $(BUILD_DIR)/release
-	@cp $(BUILD_DIR)/$(BINARY_NAME)-windows.exe $(BUILD_DIR)/release/
-	@cp $(BUILD_DIR)/$(BINARY_NAME)-darwin $(BUILD_DIR)/release/
-	@cp README.md $(BUILD_DIR)/release/
-	@cp -r examples $(BUILD_DIR)/release/
-	@cd $(BUILD_DIR) && tar -czf go-game-vision-release.tar.gz release/
-	@echo "Release package created: $(BUILD_DIR)/go-game-vision-release.tar.gz"
+ifeq ($(OS),Windows_NT)
+	@if not exist $(BUILD_DIR)\release $(MKDIR) $(BUILD_DIR)\release
+	@$(COPY) $(BUILD_DIR)\$(BINARY_WINDOWS) $(BUILD_DIR)\release\
+	@$(COPY) $(BUILD_DIR)\$(BINARY_DARWIN) $(BUILD_DIR)\release\
+	@$(COPY) $(BUILD_DIR)\$(BINARY_LINUX) $(BUILD_DIR)\release\
+	@$(COPY) README.md $(BUILD_DIR)\release\
+	@$(XCOPY) $(EXAMPLES_DIR) $(BUILD_DIR)\release\examples
+	@cd $(BUILD_DIR) && $(ARCHIVE_CMD) go-game-vision-release$(ARCHIVE_EXT) -DestinationPath . -Force
+else
+	@$(MKDIR) $(BUILD_DIR)/release
+	@$(COPY) $(BUILD_DIR)/$(BINARY_WINDOWS) $(BUILD_DIR)/release/
+	@$(COPY) $(BUILD_DIR)/$(BINARY_DARWIN) $(BUILD_DIR)/release/
+	@$(COPY) $(BUILD_DIR)/$(BINARY_LINUX) $(BUILD_DIR)/release/
+	@$(COPY) README.md $(BUILD_DIR)/release/
+	@$(XCOPY) $(EXAMPLES_DIR) $(BUILD_DIR)/release/examples
+	@cd $(BUILD_DIR) && $(ARCHIVE_CMD) go-game-vision-release$(ARCHIVE_EXT) release/
+endif
+	@echo "Release package created: $(BUILD_DIR)/go-game-vision-release$(ARCHIVE_EXT)"
 
 # Show help information
 help:
 	@echo "Go Game Vision - Available Make commands:"
 	@echo ""
 	@echo "Build related:"
-	@echo "  build          - Build executable for current platform"
+	@echo "  build          - Build executable for current platform ($(DETECTED_OS))"
 	@echo "  build-windows  - Build Windows version"
 	@echo "  build-darwin   - Build macOS version"
+	@echo "  build-linux    - Build Linux version"
 	@echo "  build-all      - Build all platform versions"
 	@echo ""
 	@echo "Development related:"
 	@echo "  deps           - Install Go dependencies"
 	@echo "  test           - Run tests"
-	@echo "  test-coverage  - Run tests and generate coverage report"
 	@echo "  fmt            - Format code"
 	@echo "  vet            - Run code check"
 	@echo "  lint           - Run code quality check"
@@ -158,12 +203,6 @@ help:
 	@echo ""
 	@echo "Runtime related:"
 	@echo "  run            - Run main program"
-	@echo "  examples       - Run example code"
-	@echo ""
-	@echo "Tools related:"
-	@echo "  install-tools  - Install development tools"
-	@echo "  install        - Install to system"
-	@echo "  uninstall      - Uninstall from system"
 	@echo ""
 	@echo "Others:"
 	@echo "  clean          - Clean build files"
