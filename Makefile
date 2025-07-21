@@ -57,14 +57,14 @@ BINARY_WINDOWS=$(BINARY_NAME)-windows.exe
 BINARY_DARWIN=$(BINARY_NAME)-darwin
 BINARY_LINUX=$(BINARY_NAME)-linux
 
-.PHONY: all build clean test deps help run examples build-windows build-darwin build-linux build-all install uninstall release test-makefile show-env show-cgo-env test-cgo example-compare examples-all test-cli demo
+.PHONY: all build clean test deps help run build-windows build-darwin build-linux build-all release
 
 # Default target
 all: clean deps test build
 
 # Build project for current platform (CGO disabled)
 build:
-	@echo "Building project for $(DETECTED_OS) with CGO disabled..."
+	@echo "Building project for $(DETECTED_OS)"
 ifeq ($(OS),Windows_NT)
 	@if not exist $(BUILD_DIR) $(MKDIR) $(BUILD_DIR)
 	@powershell -Command "$(GOBUILD) -ldflags \"-s -w\" -o $(BUILD_DIR)/$(BINARY_LOCAL) $(MAIN_PATH)"
@@ -77,7 +77,7 @@ endif
 
 # Cross-platform builds
 build-windows:
-	@echo "Building Windows version with CGO disabled..."
+	@echo "Building Windows version"
 ifeq ($(OS),Windows_NT)
 	@if not exist $(BUILD_DIR) $(MKDIR) $(BUILD_DIR)
 	@powershell -Command "$$env:GOOS='windows'; $$env:GOARCH='amd64';$(GOBUILD) -ldflags \"-s -w\" -o $(BUILD_DIR)/$(BINARY_WINDOWS) $(MAIN_PATH)"
@@ -88,7 +88,7 @@ endif
 	@echo "Windows build complete: $(BUILD_DIR)/$(BINARY_WINDOWS)"
 
 build-darwin:
-	@echo "Building macOS version with CGO disabled..."
+	@echo "Building macOS version"
 ifeq ($(OS),Windows_NT)
 	@if not exist $(BUILD_DIR) $(MKDIR) $(BUILD_DIR)
 	@powershell -Command "$$env:GOOS='darwin'; $$env:GOARCH='amd64';$(GOBUILD) -ldflags \"-s -w\" -o $(BUILD_DIR)/$(BINARY_DARWIN) $(MAIN_PATH)"
@@ -99,7 +99,7 @@ endif
 	@echo "macOS build complete: $(BUILD_DIR)/$(BINARY_DARWIN)"
 
 build-linux:
-	@echo "Building Linux version with CGO disabled..."
+	@echo "Building Linux version"
 ifeq ($(OS),Windows_NT)
 	@if not exist $(BUILD_DIR) $(MKDIR) $(BUILD_DIR)
 	@powershell -Command "$$env:GOOS='linux'; $$env:GOARCH='amd64'; $(GOBUILD) -ldflags \"-s -w\" -o $(BUILD_DIR)/$(BINARY_LINUX) $(MAIN_PATH)"

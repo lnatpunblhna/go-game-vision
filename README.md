@@ -201,8 +201,6 @@ go-game-vision/
 │   └── utils/             # 工具模块
 │       ├── logger.go      # 日志记录
 │       └── errors.go      # 错误处理
-├── examples/              # 示例代码
-│   └── basic_usage.go     # 基础使用示例
 ├── tests/                 # 测试文件
 │   ├── process_test.go    # 进程管理测试
 │   └── capture_test.go    # 截图功能测试
@@ -222,13 +220,6 @@ go test ./tests/ -run TestProcessManager
 
 # 运行测试并显示详细输出
 go test -v ./tests/...
-```
-
-## 运行示例
-
-```bash
-# 运行基础使用示例
-go run examples/basic_usage.go
 ```
 
 ## 注意事项
@@ -259,13 +250,3 @@ go run examples/basic_usage.go
 ## 许可证
 
 本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。
-
-## 更新日志
-
-### v1.0.0
-- 初始版本发布
-- 实现跨平台进程管理
-- 实现Windows和macOS窗口截图
-- 集成GoCV图像处理功能
-- 集成Tesseract OCR功能
-- 提供完整的API和示例代码

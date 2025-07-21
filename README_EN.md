@@ -203,8 +203,6 @@ go-game-vision/
 │   └── utils/             # Utility modules
 │       ├── logger.go      # Logging
 │       └── errors.go      # Error handling
-├── examples/              # Example code
-│   └── basic_usage.go     # Basic usage examples
 ├── tests/                 # Test files
 │   ├── process_test.go    # Process management tests
 │   └── capture_test.go    # Screenshot functionality tests
@@ -225,13 +223,6 @@ go test ./tests/ -run TestProcessManager
 
 # Run tests with verbose output
 go test -v ./tests/...
-```
-
-## Running Examples
-
-```bash
-# Run basic usage example
-go run examples/basic_usage.go
 ```
 
 ## Notes
@@ -262,13 +253,3 @@ go run examples/basic_usage.go
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Changelog
-
-### v1.0.0
-- Initial release
-- Implemented cross-platform process management
-- Implemented Windows and macOS window screenshot
-- Integrated GoCV image processing functionality
-- Integrated Tesseract OCR functionality
-- Provided complete API and example code

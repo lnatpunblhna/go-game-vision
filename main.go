@@ -17,7 +17,7 @@ func main() {
 	utils.GlobalLogger = utils.NewLogger(utils.INFO)
 
 	fmt.Println("=== Go Game Vision - Cross-platform Window Capture Tool ===")
-	fmt.Println("Version: 1.0.0")
+	fmt.Println("Version: 1.1.0")
 	fmt.Println("Supported Platforms: Windows, macOS")
 	fmt.Println()
 
@@ -88,7 +88,7 @@ func showUsage() {
 }
 
 func showVersion() {
-	fmt.Println("Go Game Vision v1.0.0")
+	fmt.Println("Go Game Vision v1.1.0")
 	fmt.Println("Cross-platform Window Capture and Image Processing Tool")
 	fmt.Println("Supported Platforms: Windows, macOS, Linux")
 	fmt.Println()
