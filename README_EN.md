@@ -71,22 +71,6 @@ brew install opencv tesseract
 
 ## Quick Start
 
-### Command Line Usage
-
-```bash
-# List all processes
-go run main.go list
-
-# Capture window of specified process
-go run main.go capture notepad
-
-# Capture window and specify output filename
-go run main.go capture explorer window.png
-
-# Show help information
-go run main.go help
-```
-
 ### Programming Interface Usage
 
 ```go
@@ -206,7 +190,6 @@ go-game-vision/
 ├── tests/                 # Test files
 │   ├── process_test.go    # Process management tests
 │   └── capture_test.go    # Screenshot functionality tests
-├── main.go               # Main program
 ├── go.mod                # Go module file
 ├── README.md             # Project documentation (Chinese)
 └── README_EN.md          # Project documentation (English)

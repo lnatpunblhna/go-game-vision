@@ -69,22 +69,6 @@ brew install opencv
 
 ## 快速开始
 
-### 命令行使用
-
-```bash
-# 列出所有进程
-go run main.go list
-
-# 截取指定进程的窗口
-go run main.go capture notepad
-
-# 截取窗口并指定输出文件名
-go run main.go capture explorer window.png
-
-# 显示帮助信息
-go run main.go help
-```
-
 ### 编程接口使用
 
 ```go
@@ -204,7 +188,6 @@ go-game-vision/
 ├── tests/                 # 测试文件
 │   ├── process_test.go    # 进程管理测试
 │   └── capture_test.go    # 截图功能测试
-├── main.go               # 主程序
 ├── go.mod                # Go模块文件
 └── README.md             # 项目文档
 ```
