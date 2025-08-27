@@ -14,72 +14,56 @@ const (
 	INFO
 	WARN
 	ERROR
+	SILENT // 静默模式，不输出任何日志
 )
 
-// Logger log recorder struct
-type Logger struct {
-	level  LogLevel
-	logger *log.Logger
+var (
+	currentLogLevel = INFO
+	enableLogging   = true
+)
+
+// SetLogLevel sets the global log level
+func SetLogLevel(level LogLevel) {
+	currentLogLevel = level
 }
 
-// NewLogger creates a new logger
-func NewLogger(level LogLevel) *Logger {
-	return &Logger{
-		level:  level,
-		logger: log.New(os.Stdout, "", log.LstdFlags),
+// SetLoggingEnabled enables or disables logging
+func SetLoggingEnabled(enabled bool) {
+	enableLogging = enabled
+}
+
+// logOutput outputs log message if logging is enabled and level is appropriate
+func logOutput(level LogLevel, levelName, format string, args ...interface{}) {
+	if !enableLogging || level < currentLogLevel {
+		return
 	}
+
+	message := fmt.Sprintf(format, args...)
+	log.Printf("[%s] %s", levelName, message)
 }
 
 // Debug logs debug information
-func (l *Logger) Debug(format string, args ...interface{}) {
-	if l.level <= DEBUG {
-		l.log("DEBUG", format, args...)
-	}
+func Debug(format string, args ...interface{}) {
+	logOutput(DEBUG, "DEBUG", format, args...)
 }
 
 // Info logs information
-func (l *Logger) Info(format string, args ...interface{}) {
-	if l.level <= INFO {
-		l.log("INFO", format, args...)
-	}
+func Info(format string, args ...interface{}) {
+	logOutput(INFO, "INFO", format, args...)
 }
 
 // Warn logs warnings
-func (l *Logger) Warn(format string, args ...interface{}) {
-	if l.level <= WARN {
-		l.log("WARN", format, args...)
-	}
+func Warn(format string, args ...interface{}) {
+	logOutput(WARN, "WARN", format, args...)
 }
 
 // Error logs errors
-func (l *Logger) Error(format string, args ...interface{}) {
-	if l.level <= ERROR {
-		l.log("ERROR", format, args...)
-	}
-}
-
-// log internal logging method
-func (l *Logger) log(level, format string, args ...interface{}) {
-	message := fmt.Sprintf(format, args...)
-	l.logger.Printf("[%s] %s", level, message)
-}
-
-// GlobalLogger global logger instance
-var GlobalLogger = NewLogger(INFO)
-
-// Convenience functions
-func Debug(format string, args ...interface{}) {
-	GlobalLogger.Debug(format, args...)
-}
-
-func Info(format string, args ...interface{}) {
-	GlobalLogger.Info(format, args...)
-}
-
-func Warn(format string, args ...interface{}) {
-	GlobalLogger.Warn(format, args...)
-}
-
 func Error(format string, args ...interface{}) {
-	GlobalLogger.Error(format, args...)
+	logOutput(ERROR, "ERROR", format, args...)
+}
+
+// init initializes logger with stderr output
+func init() {
+	log.SetOutput(os.Stderr)
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
 }

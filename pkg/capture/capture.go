@@ -51,10 +51,11 @@ func DefaultCaptureOptions() *CaptureOptions {
 
 // WindowInfo window information
 type WindowInfo struct {
-	Handle uintptr         // Window handle
-	Title  string          // Window title
-	PID    uint32          // Process ID
-	Rect   image.Rectangle // Window position and size
+	Handle   uintptr         // Window handle (Windows) or Window ID (macOS)
+	Title    string          // Window title
+	PID      uint32          // Process ID
+	Rect     image.Rectangle // Window position and size
+	IsHidden bool            // Whether window is hidden/minimized
 }
 
 // ScreenCapture screen capture interface
@@ -64,6 +65,9 @@ type ScreenCapture interface {
 
 	// SaveImage saves image to file
 	SaveImage(img image.Image, filename string, format ImageFormat, quality int) error
+
+	// GetWindowInfoByPID gets window information by process ID (optional, platform-specific)
+	GetWindowInfoByPID(pid uint32) (*WindowInfo, error)
 }
 
 // NewScreenCapture creates screen capture instance
@@ -109,4 +113,17 @@ func CaptureAndSave(pid uint32, filename string, format ImageFormat, quality int
 
 	utils.Info("Successfully captured and saved window PID=%d to file: %s", pid, filename)
 	return nil
+}
+
+// GetWindowInfoByPID convenience function: get window information by process ID
+func GetWindowInfoByPID(pid uint32) (*WindowInfo, error) {
+	capture := NewScreenCapture()
+	info, err := capture.GetWindowInfoByPID(pid)
+	if err != nil {
+		utils.Error("Failed to get window info for PID=%d: %v", pid, err)
+		return nil, utils.WrapError(err, "failed to get window info")
+	}
+
+	utils.Info("Successfully got window info for PID=%d", pid)
+	return info, nil
 }

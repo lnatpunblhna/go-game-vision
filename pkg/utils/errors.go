@@ -10,7 +10,6 @@ var (
 	ErrWindowNotFound       = fmt.Errorf("window not found")
 	ErrCaptureFailure       = fmt.Errorf("capture failed")
 	ErrImageProcessing      = fmt.Errorf("image processing failed")
-	ErrOCRFailure           = fmt.Errorf("OCR recognition failed")
 	ErrInvalidParameter     = fmt.Errorf("invalid parameter")
 	ErrPlatformNotSupported = fmt.Errorf("platform not supported")
 )
@@ -52,7 +51,10 @@ func WrapError(err error, message string) error {
 	return fmt.Errorf("%s: %w", message, err)
 }
 
-// IsError checks error type
+// IsError checks if error matches target error
 func IsError(err, target error) bool {
-	return fmt.Sprintf("%v", err) == fmt.Sprintf("%v", target)
+	if err == nil || target == nil {
+		return err == target
+	}
+	return err.Error() == target.Error()
 }

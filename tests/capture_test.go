@@ -158,3 +158,50 @@ func TestCalculateSimilarity(t *testing.T) {
 		}
 	})
 }
+
+func TestWindowInfoCapture(t *testing.T) {
+	t.Run("GetWindowInfoByPID", func(t *testing.T) {
+		// 尝试获取系统进程的窗口信息进行测试
+		manager := process.NewProcessManager()
+		processes, err := manager.ListAllProcesses()
+		if err != nil {
+			t.Fatalf("Failed to list processes: %v", err)
+		}
+
+		// 查找一个有窗口的进程进行测试
+		var testPID uint32
+		for _, proc := range processes {
+			// 跳过系统进程，查找用户进程
+			if proc.PID > 100 && len(proc.Name) > 0 {
+				testPID = proc.PID
+				break
+			}
+		}
+
+		if testPID == 0 {
+			t.Skip("No suitable process found for window info testing")
+		}
+
+		// 测试获取窗口信息（可能会失败，这是正常的）
+		windowInfo, err := capture.GetWindowInfoByPID(testPID)
+		if err != nil {
+			t.Logf("Could not get window info for PID %d: %v (this is normal for processes without windows)", testPID, err)
+			return
+		}
+
+		t.Logf("Found window for PID %d: Handle=%d, Rect=(%d,%d)-(%d,%d), Hidden=%t",
+			testPID, windowInfo.Handle,
+			windowInfo.Rect.Min.X, windowInfo.Rect.Min.Y,
+			windowInfo.Rect.Max.X, windowInfo.Rect.Max.Y,
+			windowInfo.IsHidden)
+
+		// 验证窗口信息的基本有效性
+		if windowInfo.PID != testPID {
+			t.Errorf("Expected PID %d, got %d", testPID, windowInfo.PID)
+		}
+
+		if windowInfo.Handle == 0 {
+			t.Error("Window handle should not be zero")
+		}
+	})
+}

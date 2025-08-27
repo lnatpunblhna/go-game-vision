@@ -2,73 +2,12 @@
 
 package process
 
-/*
-	#cgo CFLAGS: -x objective-c
-	#cgo LDFLAGS: -framework CoreGraphics -framework Foundation
-	#include <CoreGraphics/CoreGraphics.h>
-	#include <CoreFoundation/CoreFoundation.h>
-	#include <stdlib.h>
-
-	char* getWindowID(const char* windowTitle) {
-	    CFStringRef targetTitle = CFStringCreateWithCString(NULL, windowTitle, kCFStringEncodingUTF8);
-	    CFArrayRef windowList = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID);
-	    CFIndex count = CFArrayGetCount(windowList);
-
-	    for (CFIndex i = 0; i < count; i++) {
-	        CFDictionaryRef dict = (CFDictionaryRef)CFArrayGetValueAtIndex(windowList, i);
-	        CFStringRef titleRef = (CFStringRef)CFDictionaryGetValue(dict, kCGWindowName);
-	        if (titleRef && CFStringCompare(titleRef, targetTitle, 0) == kCFCompareEqualTo) {
-	            CFNumberRef windowNumber = (CFNumberRef)CFDictionaryGetValue(dict, kCGWindowNumber);
-	            int64_t winID;
-	            CFNumberGetValue(windowNumber, kCFNumberSInt64Type, &winID);
-	            char* result = (char*)malloc(32);
-	            snprintf(result, 32, "%lld", winID);
-	            CFRelease(targetTitle);
-	            CFRelease(windowList);
-	            return result;
-	        }
-	    }
-
-	    CFRelease(targetTitle);
-	    CFRelease(windowList);
-	    return NULL;
-	}
-
-	char* getWindowIDFuzzy(const char* keyword) {
-		CFStringRef keywordRef = CFStringCreateWithCString(NULL, keyword, kCFStringEncodingUTF8);
-		CFArrayRef windowList = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID);
-		CFIndex count = CFArrayGetCount(windowList);
-
-		for (CFIndex i = 0; i < count; i++) {
-			CFDictionaryRef dict = (CFDictionaryRef)CFArrayGetValueAtIndex(windowList, i);
-			CFStringRef titleRef = (CFStringRef)CFDictionaryGetValue(dict, kCGWindowName);
-			if (titleRef) {
-				CFRange found = CFStringFind(titleRef, keywordRef, kCFCompareCaseInsensitive);
-				if (found.location != kCFNotFound) {
-					CFNumberRef windowNumber = (CFNumberRef)CFDictionaryGetValue(dict, kCGWindowNumber);
-					int64_t winID;
-					CFNumberGetValue(windowNumber, kCFNumberSInt64Type, &winID);
-					char* result = (char*)malloc(32);
-					snprintf(result, 32, "%lld", winID);
-					CFRelease(keywordRef);
-					CFRelease(windowList);
-					return result;
-				}
-			}
-		}
-
-		CFRelease(keywordRef);
-		CFRelease(windowList);
-		return NULL;
-	}
-*/
-import "C"
+import 
 import (
 	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
-	"unsafe"
 
 	"github.com/lnatpunblhna/go-game-vision/pkg/utils"
 )
@@ -83,24 +22,30 @@ func newPlatformProcessManager() ProcessManager {
 
 // GetProcessByName gets process information by process name
 func (d *DarwinProcessManager) GetProcessByName(name string, mode MatchMode) ([]ProcessInfo, error) {
-	var result []ProcessInfo
-	var proc ProcessInfo
-	switch mode {
-	case ExactMatch:
-		u64, err := strconv.ParseUint(d.getWindowID(name), 10, 64)
-		if err != nil {
-			fmt.Println("转换失败:", err)
-		}
-		proc.PID = uint32(u64)
-	case FuzzyMatch:
-		u64, err := strconv.ParseUint(d.getWindowIDFuzzy(name), 10, 64)
-		if err != nil {
-			fmt.Println("转换失败:", err)
-		}
-		proc.PID = uint32(u64)
+	allProcesses, err := d.ListAllProcesses()
+	if err != nil {
+		return nil, utils.WrapError(err, "failed to list processes")
 	}
 
-	result = append(result, proc)
+	var result []ProcessInfo
+	for _, proc := range allProcesses {
+		match := false
+		switch mode {
+		case ExactMatch:
+			match = proc.Name == name
+		case FuzzyMatch:
+			// 在名称和路径中都进行模糊匹配
+			nameLower := strings.ToLower(proc.Name)
+			pathLower := strings.ToLower(proc.Path)
+			match = strings.Contains(nameLower, searchLower) ||
+				strings.Contains(pathLower, searchLower)
+					strings.Contains(pathLower, searchLower)
+		}
+
+		if match {
+			result = append(result, proc)
+		}
+	}
 
 	utils.Debug("Found %d matching processes: %s", len(result), name)
 	return result, nil
@@ -193,28 +138,4 @@ func (d *DarwinProcessManager) IsProcessRunning(pid uint32) bool {
 	cmd := exec.Command("ps", "-p", fmt.Sprintf("%d", pid))
 	err := cmd.Run()
 	return err == nil
-}
-
-func (d *DarwinProcessManager) getWindowID(title string) string {
-	cTitle := C.CString(title)
-	defer C.free(unsafe.Pointer(cTitle))
-
-	cID := C.getWindowID(cTitle)
-	if cID == nil {
-		return ""
-	}
-	defer C.free(unsafe.Pointer(cID))
-	return C.GoString(cID)
-}
-
-func (d *DarwinProcessManager) getWindowIDFuzzy(keyword string) string {
-	cKeyword := C.CString(keyword)
-	defer C.free(unsafe.Pointer(cKeyword))
-
-	cID := C.getWindowIDFuzzy(cKeyword)
-	if cID == nil {
-		return ""
-	}
-	defer C.free(unsafe.Pointer(cID))
-	return C.GoString(cID)
 }

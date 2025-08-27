@@ -287,3 +287,27 @@ func (w *WindowsCapture) isWindowVisible(hwnd uintptr) bool {
 	ret, _, _ := procIsWindowVisible.Call(hwnd)
 	return ret != 0
 }
+
+// GetWindowInfoByPID gets window information by process ID
+func (w *WindowsCapture) GetWindowInfoByPID(pid uint32) (*WindowInfo, error) {
+	windows, err := w.GetWindowsByPID(pid)
+	if err != nil {
+		return nil, utils.WrapError(err, "failed to get windows by PID")
+	}
+
+	if len(windows) == 0 {
+		return nil, utils.ErrWindowNotFound
+	}
+
+	// 返回第一个可见窗口，或者如果没有可见窗口则返回第一个窗口
+	for _, window := range windows {
+		if w.isWindowVisible(window.Handle) {
+			window.IsHidden = false
+			return &window, nil
+		}
+	}
+
+	// 没有可见窗口，返回第一个窗口并标记为隐藏
+	windows[0].IsHidden = true
+	return &windows[0], nil
+}

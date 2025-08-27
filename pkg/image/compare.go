@@ -1,13 +1,11 @@
 package image
 
 import (
-	"fmt"
 	"image"
-	"image/jpeg"
-	"image/png"
+	_ "image/jpeg" // 导入jpeg解码器
+	_ "image/png"  // 导入png解码器
 	"math"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/lnatpunblhna/go-game-vision/pkg/utils"
@@ -250,7 +248,7 @@ func (ic *ImageComparer) structuralSimilarity(img1, img2 gocv.Mat) (*MatchResult
 }
 
 // ParseCompareMethod 解析对比方法参数
-func (ic *ImageComparer) ParseCompareMethod(method string) CompareMethod {
+func ParseCompareMethod(method string) CompareMethod {
 	switch strings.ToLower(method) {
 	case "template", "templatematching":
 		return TemplateMatching
@@ -261,13 +259,13 @@ func (ic *ImageComparer) ParseCompareMethod(method string) CompareMethod {
 	case "similarity", "structural", "structuralsimilarity":
 		return StructuralSimilarity
 	default:
-		fmt.Printf("Warning: Unknown comparison method '%s', using template matching\n", method)
+		utils.Warn("Unknown comparison method '%s', using template matching", method)
 		return TemplateMatching
 	}
 }
 
 // GetMethodName 获取对比方法名称
-func (ic *ImageComparer) GetMethodName(method CompareMethod) string {
+func GetMethodName(method CompareMethod) string {
 	switch method {
 	case TemplateMatching:
 		return "Template Matching"
@@ -283,36 +281,19 @@ func (ic *ImageComparer) GetMethodName(method CompareMethod) string {
 }
 
 // LoadImage 加载图像文件
-func (ic *ImageComparer) LoadImage(filename string) (image.Image, error) {
+func LoadImage(filename string) (image.Image, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, utils.WrapError(err, "打开图像文件失败")
 	}
 	defer file.Close()
 
-	// 根据文件扩展名选择解码器
-	ext := strings.ToLower(filepath.Ext(filename))
-	switch ext {
-	case ".jpg", ".jpeg":
-		img, err := jpeg.Decode(file)
-		if err != nil {
-			return nil, utils.WrapError(err, "解码JPEG图像失败")
-		}
-		return img, nil
-	case ".png":
-		img, err := png.Decode(file)
-		if err != nil {
-			return nil, utils.WrapError(err, "解码PNG图像失败")
-		}
-		return img, nil
-	default:
-		// 尝试自动检测格式
-		img, _, err := image.Decode(file)
-		if err != nil {
-			return nil, utils.WrapError(err, "解码图像失败")
-		}
-		return img, nil
+	// 尝试自动检测格式，Go的image包会自动处理各种格式
+	img, _, err := image.Decode(file)
+	if err != nil {
+		return nil, utils.WrapError(err, "解码图像失败")
 	}
+	return img, nil
 }
 
 // imageToMat 将Go image转换为OpenCV Mat

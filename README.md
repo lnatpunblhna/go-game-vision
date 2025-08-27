@@ -2,7 +2,7 @@
 
 [English](README_EN.md) | 中文
 
-一个跨平台的Go项目，实现Windows和macOS的程序窗口捕获功能，包含进程管理、窗口截图、图像处理和OCR文字识别等功能模块。
+一个跨平台的Go工具框架，为Windows和macOS提供进程管理、屏幕截图、图像处理和鼠标模拟等功能模块。专为其他项目或程序调用而设计。
 
 ## 功能特性
 
@@ -12,12 +12,16 @@
 - 处理多个同名进程的情况
 - 跨平台兼容（Windows/macOS）
 
-### 📸 窗口截图模块
+### 📸 屏幕截图模块
 - **Windows平台**: 使用Windows API（BitBlt/PrintWindow）实现窗口截图
-- **macOS平台**: 使用系统命令和AppleScript实现窗口截图
-- **关键特性**: Windows下即使窗口被其他窗口遮挡也能正常截图
+- **macOS平台**: 使用Core Graphics API和screencapture命令实现真正的窗口截图
+- **关键特性**: 
+  - Windows下即使窗口被其他窗口遮挡也能正常截图
+  - macOS下能够根据进程ID获取特定窗口并截图（即使被遮挡）
+  - 自动处理多进程应用程序（如Safari、Chrome等）
 - 支持多种图片格式输出（PNG、JPEG、BMP、GIF）
-- 提供根据PID获取对应程序窗口截图的方法
+- 提供窗口信息获取功能（位置、大小、状态等）
+- 提供便捷的截图和保存方法
 
 ### 🖼️ 图像处理模块
 - 集成GoCV库实现图片对比功能
@@ -27,6 +31,13 @@
   - 特征点匹配（Feature Matching）
   - 直方图对比（Histogram Comparison）
   - 结构相似性（Structural Similarity）
+
+### 🖱️ 鼠标模拟模块
+- 跨平台后台鼠标点击功能
+- 支持左键、右键、中键点击
+- 不移动鼠标光标的后台点击
+- 屏幕坐标验证和边界检查
+- 可配置的点击延迟设置
 
 ## 系统要求
 
@@ -79,7 +90,7 @@ import (
     "github.com/lnatpunblhna/go-game-vision/pkg/capture"
     "github.com/lnatpunblhna/go-game-vision/pkg/process"
     "github.com/lnatpunblhna/go-game-vision/pkg/image"
-    "github.com/lnatpunblhna/go-game-vision/pkg/ocr"
+    "github.com/lnatpunblhna/go-game-vision/pkg/mouse"
 )
 
 func main() {
@@ -90,31 +101,42 @@ func main() {
     }
     fmt.Printf("找到记事本进程，PID: %d\n", pid)
 
-    // 2. 窗口截图
+    // 2. 获取窗口信息
+    windowInfo, err := capture.GetWindowInfoByPID(pid)
+    if err != nil {
+        panic(err)
+    }
+    fmt.Printf("窗口大小: %dx%d\n", windowInfo.Rect.Dx(), windowInfo.Rect.Dy())
+
+    // 3. 截取窗口（即使被遮挡）
     img, err := capture.CaptureWindowByPID(pid, capture.DefaultCaptureOptions())
     if err != nil {
         panic(err)
     }
 
-    // 3. 保存截图
-    err = capture.CaptureAndSave(pid, "notepad.png", capture.PNG, 90)
+    // 4. 保存截图
+    err = capture.CaptureAndSave(pid, "window_capture.png", capture.PNG, 90)
     if err != nil {
         panic(err)
     }
 
-    // 4. 图像对比
+    // 5. 图像对比
+    img1, _ := image.LoadImage("image1.png")
+    img2, _ := image.LoadImage("image2.png")
     similarity, err := image.CalculateSimilarity(img1, img2)
     if err != nil {
         panic(err)
     }
     fmt.Printf("图像相似度: %.2f\n", similarity)
 
-    // 5. OCR文字识别
-    text, err := ocr.RecognizeTextFromFile("notepad.png", ocr.English)
+    // 6. 鼠标模拟点击（在窗口坐标系内）
+    clickX := windowInfo.Rect.Min.X + 100 // 窗口内相对位置
+    clickY := windowInfo.Rect.Min.Y + 100
+    err = mouse.BackgroundLeftClick(clickX, clickY)
     if err != nil {
         panic(err)
     }
-    fmt.Printf("识别的文字: %s\n", text)
+    fmt.Println("后台点击完成")
 }
 ```
 
@@ -140,15 +162,24 @@ processes, err := manager.ListAllProcesses()
 // 创建截图器
 capturer := capture.NewScreenCapture()
 
-// 截取窗口
+// 截取特定进程的窗口（即使被遮挡）
 options := capture.DefaultCaptureOptions()
 img, err := capturer.CaptureWindowByPID(pid, options)
 
-// 截取屏幕
-img, err := capturer.CaptureScreen(options)
+// 获取窗口信息
+windowInfo, err := capturer.GetWindowInfoByPID(pid)
+fmt.Printf("窗口位置: (%d, %d), 大小: %dx%d\n", 
+    windowInfo.Rect.Min.X, windowInfo.Rect.Min.Y,
+    windowInfo.Rect.Dx(), windowInfo.Rect.Dy())
 
 // 保存图片
 err = capturer.SaveImage(img, "output.png", capture.PNG, 90)
+
+// 便捷函数：直接截图并保存
+err = capture.CaptureAndSave(pid, "window.png", capture.PNG, 90)
+
+// 便捷函数：获取窗口信息
+windowInfo, err := capture.GetWindowInfoByPID(pid)
 ```
 
 ### 图像处理 (pkg/image)
@@ -161,6 +192,34 @@ comparer := image.NewImageComparer(image.TemplateMatching)
 result, err := comparer.CompareImages(img1, img2)
 fmt.Printf("相似度: %.2f, 位置: (%d, %d)\n", 
     result.Similarity, result.Location.X, result.Location.Y)
+
+// 加载图像文件
+img, err := image.LoadImage("example.png")
+
+// 便捷函数计算相似度
+similarity, err := image.CalculateSimilarity(img1, img2)
+```
+
+### 鼠标模拟 (pkg/mouse)
+
+```go
+// 创建鼠标控制器
+clicker := mouse.NewMouseClicker()
+
+// 后台点击（不移动光标）
+options := mouse.DefaultClickOptions()
+err := clicker.BackgroundClick(100, 100, options)
+
+// 便捷函数
+err = mouse.BackgroundLeftClick(100, 100)    // 左键点击
+err = mouse.BackgroundRightClick(100, 100)   // 右键点击
+err = mouse.BackgroundMiddleClick(100, 100)  // 中键点击
+
+// 坐标验证
+err = mouse.ValidateCoordinates(100, 100)
+
+// 获取屏幕大小
+width, height, err := clicker.GetScreenSize()
 ```
 
 
@@ -174,20 +233,24 @@ go-game-vision/
 │   │   ├── process.go     # 跨平台接口
 │   │   ├── process_windows.go  # Windows实现
 │   │   └── process_darwin.go   # macOS实现
-│   ├── capture/           # 窗口截图
+│   ├── capture/           # 屏幕截图
 │   │   ├── capture.go     # 跨平台接口
 │   │   ├── capture_windows.go  # Windows实现
 │   │   └── capture_darwin.go   # macOS实现
 │   ├── image/             # 图像处理
 │   │   └── compare.go     # 图像对比功能
-│   ├── ocr/               # OCR识别
-│   │   └── ocr.go         # OCR功能
+│   ├── mouse/             # 鼠标模拟
+│   │   ├── mouse.go       # 跨平台接口
+│   │   ├── mouse_windows.go    # Windows实现
+│   │   └── mouse_darwin.go     # macOS实现
 │   └── utils/             # 工具模块
 │       ├── logger.go      # 日志记录
 │       └── errors.go      # 错误处理
 ├── tests/                 # 测试文件
 │   ├── process_test.go    # 进程管理测试
-│   └── capture_test.go    # 截图功能测试
+│   ├── capture_test.go    # 截图功能测试
+│   ├── image_compare_test.go  # 图像对比测试
+│   └── mouse_test.go      # 鼠标模拟测试
 ├── go.mod                # Go模块文件
 └── README.md             # 项目文档
 ```
@@ -219,8 +282,8 @@ go test -v ./tests/...
 
 ### 性能优化
 - 大量截图操作时建议复用截图器实例
-- OCR识别比较耗时，建议在后台线程执行
 - 图像对比操作的性能取决于图片大小和算法选择
+- 鼠标模拟操作建议添加适当延迟避免过于频繁
 
 ## 贡献指南
 

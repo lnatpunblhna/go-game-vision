@@ -11,7 +11,7 @@ import (
 
 func TestImageComparer(t *testing.T) {
 	// 设置日志级别
-	utils.GlobalLogger = utils.NewLogger(utils.ERROR)
+	utils.SetLogLevel(utils.ERROR)
 
 	// 创建测试图像
 	img1 := createTestImageForComparison(100, 100, color.RGBA{255, 0, 0, 255}) // 红色
@@ -80,9 +80,9 @@ func TestCompareMethodParsing(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		result := parseCompareMethodTest(tc.input)
+		result := imagecompare.ParseCompareMethod(tc.input)
 		if result != tc.expected {
-			t.Errorf("parseCompareMethod(%s) = %v, expected %v", tc.input, result, tc.expected)
+			t.Errorf("ParseCompareMethod(%s) = %v, expected %v", tc.input, result, tc.expected)
 		}
 	}
 }
@@ -164,39 +164,12 @@ func createTestImageForComparison(width, height int, fillColor color.RGBA) image
 
 // getMethodNameForTest 获取测试用的方法名称
 func getMethodNameForTest(method imagecompare.CompareMethod) string {
-	switch method {
-	case imagecompare.TemplateMatching:
-		return "TemplateMatching"
-	case imagecompare.FeatureMatching:
-		return "FeatureMatching"
-	case imagecompare.HistogramComparison:
-		return "HistogramComparison"
-	case imagecompare.StructuralSimilarity:
-		return "StructuralSimilarity"
-	default:
-		return "Unknown"
-	}
-}
-
-// parseCompareMethodTest 模拟 main.go 中的 parseCompareMethod 函数
-func parseCompareMethodTest(method string) imagecompare.CompareMethod {
-	switch method {
-	case "template", "templatematching":
-		return imagecompare.TemplateMatching
-	case "feature", "featurematching":
-		return imagecompare.FeatureMatching
-	case "histogram", "histogramcomparison":
-		return imagecompare.HistogramComparison
-	case "similarity", "structural", "structuralsimilarity":
-		return imagecompare.StructuralSimilarity
-	default:
-		return imagecompare.TemplateMatching
-	}
+	return imagecompare.GetMethodName(method)
 }
 
 // Benchmark tests
 func BenchmarkTemplateMatching(b *testing.B) {
-	utils.GlobalLogger = utils.NewLogger(utils.ERROR)
+	utils.SetLogLevel(utils.ERROR)
 
 	img1 := createTestImageForComparison(100, 100, color.RGBA{255, 0, 0, 255})
 	img2 := createTestImageForComparison(100, 100, color.RGBA{255, 0, 0, 255})
@@ -214,7 +187,7 @@ func BenchmarkTemplateMatching(b *testing.B) {
 }
 
 func BenchmarkHistogramComparison(b *testing.B) {
-	utils.GlobalLogger = utils.NewLogger(utils.ERROR)
+	utils.SetLogLevel(utils.ERROR)
 
 	img1 := createTestImageForComparison(100, 100, color.RGBA{255, 0, 0, 255})
 	img2 := createTestImageForComparison(100, 100, color.RGBA{255, 0, 0, 255})

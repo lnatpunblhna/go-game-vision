@@ -9,7 +9,7 @@ import (
 
 func init() {
 	// Set up logger for tests
-	utils.GlobalLogger = utils.NewLogger(utils.DEBUG)
+	utils.SetLogLevel(utils.DEBUG)
 }
 
 func TestMouseClicker_GetScreenSize(t *testing.T) {
