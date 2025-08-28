@@ -2,7 +2,6 @@
 
 package process
 
-import 
 import (
 	"fmt"
 	"os/exec"
@@ -37,9 +36,9 @@ func (d *DarwinProcessManager) GetProcessByName(name string, mode MatchMode) ([]
 			// 在名称和路径中都进行模糊匹配
 			nameLower := strings.ToLower(proc.Name)
 			pathLower := strings.ToLower(proc.Path)
+			searchLower := strings.ToLower(name)
 			match = strings.Contains(nameLower, searchLower) ||
 				strings.Contains(pathLower, searchLower)
-					strings.Contains(pathLower, searchLower)
 		}
 
 		if match {
