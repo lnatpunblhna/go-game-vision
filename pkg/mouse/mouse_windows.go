@@ -4,7 +4,6 @@ package mouse
 
 import (
 	"fmt"
-	"syscall"
 	"time"
 	"unsafe"
 
