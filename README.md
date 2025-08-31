@@ -26,11 +26,14 @@
 ### 🖼️ 图像处理模块
 - 集成GoCV库实现图片对比功能
 - 提供图片相似度计算方法
+- **智能坐标系统**: 返回窗口相对坐标，可自动转换为屏幕绝对坐标
+- **一站式匹配点击**: 图像匹配后可直接执行鼠标点击操作
 - 支持多种对比算法：
   - 模板匹配（Template Matching）
   - 特征点匹配（Feature Matching）
   - 直方图对比（Histogram Comparison）
   - 结构相似性（Structural Similarity）
+  - 多尺度模板匹配（Multi-Scale Template Matching）
 
 ### 🖱️ 鼠标模拟模块
 - 跨平台后台鼠标点击功能
@@ -120,23 +123,33 @@ func main() {
         panic(err)
     }
 
-    // 5. 图像对比
-    img1, _ := image.LoadImage("image1.png")
-    img2, _ := image.LoadImage("image2.png")
-    similarity, err := image.CalculateSimilarity(img1, img2)
+    // 5. 图像对比和智能点击
+    template, _ := image.LoadImage("button_template.png")
+    
+    // 方法一：传统方式
+    result, err := image.CompareImages(img, template, image.TemplateMatching)
     if err != nil {
         panic(err)
     }
-    fmt.Printf("图像相似度: %.2f\n", similarity)
-
-    // 6. 鼠标模拟点击（在窗口坐标系内）
-    clickX := windowInfo.Rect.Min.X + 100 // 窗口内相对位置
-    clickY := windowInfo.Rect.Min.Y + 100
-    err = mouse.BackgroundLeftClick(clickX, clickY)
+    fmt.Printf("图像相似度: %.2f, 窗口坐标: (%d, %d)\n", 
+        result.Similarity, result.Location.X, result.Location.Y)
+    
+    // 转换为屏幕坐标
+    screenCoords := result.ToScreenCoordinates(windowInfo)
+    fmt.Printf("屏幕坐标: (%d, %d)\n", screenCoords.X, screenCoords.Y)
+    
+    // 直接在匹配位置点击
+    err = result.LeftClickAtMatch(windowInfo)
     if err != nil {
         panic(err)
     }
-    fmt.Println("后台点击完成")
+    
+    // 方法二：一站式匹配点击
+    result, err = image.FindAndLeftClick(img, template, windowInfo, image.TemplateMatching)
+    if err != nil {
+        panic(err)
+    }
+    fmt.Println("图像匹配并点击完成")
 }
 ```
 
@@ -188,10 +201,31 @@ windowInfo, err := capture.GetWindowInfoByPID(pid)
 // 创建图像对比器
 comparer := image.NewImageComparer(image.TemplateMatching)
 
-// 对比图像
+// 对比图像（返回窗口相对坐标）
 result, err := comparer.CompareImages(img1, img2)
-fmt.Printf("相似度: %.2f, 位置: (%d, %d)\n", 
+fmt.Printf("相似度: %.2f, 窗口坐标: (%d, %d)\n", 
     result.Similarity, result.Location.X, result.Location.Y)
+
+// 坐标转换
+windowInfo, _ := capture.GetWindowInfoByPID(pid)
+screenCoords := result.ToScreenCoordinates(windowInfo)
+screenBBox := result.ToScreenBoundingBox(windowInfo)
+
+// 智能点击功能
+err = result.LeftClickAtMatch(windowInfo)     // 左键点击
+err = result.RightClickAtMatch(windowInfo)    // 右键点击
+err = result.ClickAtMatch(windowInfo, options) // 自定义点击
+
+// 一站式匹配点击
+result, err = image.FindAndLeftClick(source, template, windowInfo, image.TemplateMatching)
+result, err = image.FindAndRightClick(source, template, windowInfo, image.TemplateMatching)
+result, err = image.FindAndClick(source, template, windowInfo, image.TemplateMatching, options)
+
+// 多尺度模板匹配
+config := image.DefaultMultiScaleConfig()
+config.MinScale = 0.8
+config.MaxScale = 1.5
+result, err = image.MultiScaleTemplateMatch(source, template, config)
 
 // 加载图像文件
 img, err := image.LoadImage("example.png")

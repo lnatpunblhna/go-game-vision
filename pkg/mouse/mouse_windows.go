@@ -4,7 +4,6 @@ package mouse
 
 import (
 	"fmt"
-	"syscall"
 	"time"
 	"unsafe"
 
@@ -48,8 +47,8 @@ type MOUSEINPUT struct {
 
 type INPUT struct {
 	Type uint32
+	_    [4]byte // padding for union alignment
 	Mi   MOUSEINPUT
-	_    [8]byte // padding for union
 }
 
 // WindowsMouseClicker implements MouseClicker for Windows
@@ -83,7 +82,10 @@ func (w *WindowsMouseClicker) BackgroundClick(x, y int, options *ClickOptions) e
 
 	// Get current cursor position to restore later
 	var currentPos POINT
-	procGetCursorPos.Call(uintptr(unsafe.Pointer(&currentPos)))
+	_, _, err = procGetCursorPos.Call(uintptr(unsafe.Pointer(&currentPos)))
+	if err != nil {
+		return err
+	}
 
 	// Perform the click
 	err = w.performClick(absX, absY, options.Button)
@@ -97,7 +99,10 @@ func (w *WindowsMouseClicker) BackgroundClick(x, y int, options *ClickOptions) e
 	}
 
 	// Restore cursor position (for true background operation)
-	procSetCursorPos.Call(uintptr(currentPos.X), uintptr(currentPos.Y))
+	_, _, err = procSetCursorPos.Call(uintptr(currentPos.X), uintptr(currentPos.Y))
+	if err != nil {
+		return err
+	}
 
 	utils.Info("Background click performed at (%d, %d) with %s button", x, y, options.Button.String())
 	return nil
@@ -143,9 +148,9 @@ func (w *WindowsMouseClicker) performClick(absX, absY int32, button MouseButton)
 
 	// Send the input events
 	ret, _, err := procSendInput.Call(
-		uintptr(len(inputs)),
+		uintptr(2), // number of inputs
 		uintptr(unsafe.Pointer(&inputs[0])),
-		uintptr(unsafe.Sizeof(inputs[0])),
+		unsafe.Sizeof(INPUT{}),
 	)
 
 	if ret == 0 {

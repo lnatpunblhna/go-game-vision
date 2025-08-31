@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/lnatpunblhna/go-game-vision/pkg/capture"
+	"github.com/lnatpunblhna/go-game-vision/pkg/mouse"
 	"github.com/lnatpunblhna/go-game-vision/pkg/utils"
 	"gocv.io/x/gocv"
 )
@@ -20,25 +22,61 @@ const (
 	FeatureMatching                           // Feature point matching
 	HistogramComparison                       // Histogram comparison
 	StructuralSimilarity                      // Structural similarity
+	MultiScaleTemplate                        // Multi-scale template matching
 )
 
 // MatchResult matching result
 type MatchResult struct {
-	Similarity float64       // Similarity (0-1)
-	Location   image.Point   // Match location
-	Confidence float64       // Confidence
-	Method     CompareMethod // Comparison method used
+	Similarity  float64         // Similarity (0-1)
+	Location    image.Point     // Match location (relative to source image)
+	Confidence  float64         // Confidence
+	Method      CompareMethod   // Comparison method used
+	Scale       float64         // Scale factor used in multi-scale matching
+	BoundingBox image.Rectangle // Bounding box of the matched region (relative to source image)
+}
+
+// MultiScaleConfig multi-scale template matching configuration
+type MultiScaleConfig struct {
+	MinScale   float64 // Minimum scale factor (default: 0.5)
+	MaxScale   float64 // Maximum scale factor (default: 2.0)
+	ScaleStep  float64 // Scale step (default: 0.1)
+	Threshold  float64 // Minimum similarity threshold (default: 0.7)
+	MaxResults int     // Maximum number of results to return (default: 5)
+}
+
+// DefaultMultiScaleConfig returns default multi-scale configuration
+func DefaultMultiScaleConfig() *MultiScaleConfig {
+	return &MultiScaleConfig{
+		MinScale:   0.5,
+		MaxScale:   2.0,
+		ScaleStep:  0.1,
+		Threshold:  0.7,
+		MaxResults: 5,
+	}
 }
 
 // ImageComparer image comparer
 type ImageComparer struct {
-	method CompareMethod
+	method           CompareMethod
+	multiScaleConfig *MultiScaleConfig
 }
 
 // NewImageComparer creates image comparer
 func NewImageComparer(method CompareMethod) *ImageComparer {
 	return &ImageComparer{
-		method: method,
+		method:           method,
+		multiScaleConfig: DefaultMultiScaleConfig(),
+	}
+}
+
+// NewImageComparerWithConfig creates image comparer with custom multi-scale config
+func NewImageComparerWithConfig(method CompareMethod, config *MultiScaleConfig) *ImageComparer {
+	if config == nil {
+		config = DefaultMultiScaleConfig()
+	}
+	return &ImageComparer{
+		method:           method,
+		multiScaleConfig: config,
 	}
 }
 
@@ -66,6 +104,8 @@ func (ic *ImageComparer) CompareImages(img1, img2 image.Image) (*MatchResult, er
 		return ic.histogramComparison(mat1, mat2)
 	case StructuralSimilarity:
 		return ic.structuralSimilarity(mat1, mat2)
+	case MultiScaleTemplate:
+		return ic.multiScaleTemplateMatching(mat1, mat2)
 	default:
 		return ic.templateMatching(mat1, mat2)
 	}
@@ -81,11 +121,22 @@ func (ic *ImageComparer) templateMatching(source, template gocv.Mat) (*MatchResu
 
 	_, maxVal, _, maxLoc := gocv.MinMaxLoc(result)
 
+	// 计算边界框
+	boundingBox := image.Rectangle{
+		Min: maxLoc,
+		Max: image.Point{
+			X: maxLoc.X + template.Cols(),
+			Y: maxLoc.Y + template.Rows(),
+		},
+	}
+
 	return &MatchResult{
-		Similarity: float64(maxVal),
-		Location:   maxLoc,
-		Confidence: float64(maxVal),
-		Method:     TemplateMatching,
+		Similarity:  float64(maxVal),
+		Location:    maxLoc,
+		Confidence:  float64(maxVal),
+		Method:      TemplateMatching,
+		Scale:       1.0,
+		BoundingBox: boundingBox,
 	}, nil
 }
 
@@ -157,10 +208,12 @@ func (ic *ImageComparer) featureMatching(img1, img2 gocv.Mat) (*MatchResult, err
 	}
 
 	return &MatchResult{
-		Similarity: similarity,
-		Location:   location,
-		Confidence: similarity,
-		Method:     FeatureMatching,
+		Similarity:  similarity,
+		Location:    location,
+		Confidence:  similarity,
+		Method:      FeatureMatching,
+		Scale:       1.0,
+		BoundingBox: image.Rectangle{},
 	}, nil
 }
 
@@ -200,10 +253,12 @@ func (ic *ImageComparer) histogramComparison(img1, img2 gocv.Mat) (*MatchResult,
 	similarity := gocv.CompareHist(hist1, hist2, gocv.HistCmpCorrel)
 
 	return &MatchResult{
-		Similarity: float64(similarity),
-		Location:   image.Point{}, // 直方图对比不提供位置信息
-		Confidence: float64(similarity),
-		Method:     HistogramComparison,
+		Similarity:  float64(similarity),
+		Location:    image.Point{}, // 直方图对比不提供位置信息
+		Confidence:  float64(similarity),
+		Method:      HistogramComparison,
+		Scale:       1.0,
+		BoundingBox: image.Rectangle{},
 	}, nil
 }
 
@@ -240,11 +295,186 @@ func (ic *ImageComparer) structuralSimilarity(img1, img2 gocv.Mat) (*MatchResult
 	similarity := 1.0 - (float64(meanVal) / 255.0)
 
 	return &MatchResult{
-		Similarity: math.Max(0, similarity),
-		Location:   image.Point{},
-		Confidence: math.Max(0, similarity),
-		Method:     StructuralSimilarity,
+		Similarity:  math.Max(0, similarity),
+		Location:    image.Point{},
+		Confidence:  math.Max(0, similarity),
+		Method:      StructuralSimilarity,
+		Scale:       1.0,
+		BoundingBox: image.Rectangle{},
 	}, nil
+}
+
+// multiScaleTemplateMatching 多尺度模板匹配
+func (ic *ImageComparer) multiScaleTemplateMatching(source, template gocv.Mat) (*MatchResult, error) {
+	config := ic.multiScaleConfig
+	if config == nil {
+		config = DefaultMultiScaleConfig()
+	}
+
+	var bestResult *MatchResult
+	bestSimilarity := 0.0
+
+	utils.Debug("开始多尺度模板匹配: 范围[%.2f-%.2f], 步长%.2f",
+		config.MinScale, config.MaxScale, config.ScaleStep)
+
+	// 遍历不同的缩放尺度
+	for scale := config.MinScale; scale <= config.MaxScale; scale += config.ScaleStep {
+		// 缩放模板
+		scaledTemplate := gocv.NewMat()
+		templateSize := image.Point{
+			X: int(float64(template.Cols()) * scale),
+			Y: int(float64(template.Rows()) * scale),
+		}
+
+		// 确保缩放后的尺寸有效
+		if templateSize.X <= 0 || templateSize.Y <= 0 ||
+			templateSize.X >= source.Cols() || templateSize.Y >= source.Rows() {
+			scaledTemplate.Close()
+			continue
+		}
+
+		gocv.Resize(template, &scaledTemplate, templateSize, 0, 0, gocv.InterpolationLinear)
+
+		// 执行模板匹配
+		result := gocv.NewMat()
+		gocv.MatchTemplate(source, scaledTemplate, &result, gocv.TmCcoeffNormed, gocv.NewMat())
+
+		_, maxVal, _, maxLoc := gocv.MinMaxLoc(result)
+		similarity := float64(maxVal)
+
+		utils.Debug("尺度 %.2f: 相似度 %.4f, 位置 (%d,%d)",
+			scale, similarity, maxLoc.X, maxLoc.Y)
+
+		// 检查是否是最佳匹配
+		if similarity > bestSimilarity && similarity >= config.Threshold {
+			// 计算实际坐标和边界框
+			actualLocation := maxLoc
+			boundingBox := image.Rectangle{
+				Min: actualLocation,
+				Max: image.Point{
+					X: actualLocation.X + templateSize.X,
+					Y: actualLocation.Y + templateSize.Y,
+				},
+			}
+
+			bestResult = &MatchResult{
+				Similarity:  similarity,
+				Location:    actualLocation,
+				Confidence:  similarity,
+				Method:      MultiScaleTemplate,
+				Scale:       scale,
+				BoundingBox: boundingBox,
+			}
+			bestSimilarity = similarity
+		}
+
+		result.Close()
+		scaledTemplate.Close()
+	}
+
+	// 如果没有找到满足阈值的匹配
+	if bestResult == nil {
+		utils.Debug("未找到满足阈值%.2f的匹配", config.Threshold)
+		return &MatchResult{
+			Similarity:  0.0,
+			Location:    image.Point{},
+			Confidence:  0.0,
+			Method:      MultiScaleTemplate,
+			Scale:       1.0,
+			BoundingBox: image.Rectangle{},
+		}, nil
+	}
+
+	utils.Info("最佳匹配: 尺度%.2f, 相似度%.4f, 位置(%d,%d)",
+		bestResult.Scale, bestResult.Similarity, bestResult.Location.X, bestResult.Location.Y)
+
+	return bestResult, nil
+}
+
+// MultiScaleTemplateMatchingAll 多尺度模板匹配 - 返回多个结果
+func (ic *ImageComparer) MultiScaleTemplateMatchingAll(source, template gocv.Mat) ([]*MatchResult, error) {
+	config := ic.multiScaleConfig
+	if config == nil {
+		config = DefaultMultiScaleConfig()
+	}
+
+	var results []*MatchResult
+
+	utils.Debug("开始多尺度模板匹配(全部结果): 范围[%.2f-%.2f], 步长%.2f",
+		config.MinScale, config.MaxScale, config.ScaleStep)
+
+	// 遍历不同的缩放尺度
+	for scale := config.MinScale; scale <= config.MaxScale; scale += config.ScaleStep {
+		// 缩放模板
+		scaledTemplate := gocv.NewMat()
+		templateSize := image.Point{
+			X: int(float64(template.Cols()) * scale),
+			Y: int(float64(template.Rows()) * scale),
+		}
+
+		// 确保缩放后的尺寸有效
+		if templateSize.X <= 0 || templateSize.Y <= 0 ||
+			templateSize.X >= source.Cols() || templateSize.Y >= source.Rows() {
+			scaledTemplate.Close()
+			continue
+		}
+
+		gocv.Resize(template, &scaledTemplate, templateSize, 0, 0, gocv.InterpolationLinear)
+
+		// 执行模板匹配
+		result := gocv.NewMat()
+		gocv.MatchTemplate(source, scaledTemplate, &result, gocv.TmCcoeffNormed, gocv.NewMat())
+
+		_, maxVal, _, maxLoc := gocv.MinMaxLoc(result)
+		similarity := float64(maxVal)
+
+		// 如果满足阈值，添加到结果中
+		if similarity >= config.Threshold {
+			actualLocation := maxLoc
+			boundingBox := image.Rectangle{
+				Min: actualLocation,
+				Max: image.Point{
+					X: actualLocation.X + templateSize.X,
+					Y: actualLocation.Y + templateSize.Y,
+				},
+			}
+
+			matchResult := &MatchResult{
+				Similarity:  similarity,
+				Location:    actualLocation,
+				Confidence:  similarity,
+				Method:      MultiScaleTemplate,
+				Scale:       scale,
+				BoundingBox: boundingBox,
+			}
+
+			results = append(results, matchResult)
+			utils.Debug("添加匹配: 尺度%.2f, 相似度%.4f, 位置(%d,%d)",
+				scale, similarity, maxLoc.X, maxLoc.Y)
+		}
+
+		result.Close()
+		scaledTemplate.Close()
+
+		// 限制结果数量
+		if len(results) >= config.MaxResults {
+			break
+		}
+	}
+
+	// 按相似度排序
+	if len(results) > 1 {
+		for i := 0; i < len(results)-1; i++ {
+			for j := i + 1; j < len(results); j++ {
+				if results[i].Similarity < results[j].Similarity {
+					results[i], results[j] = results[j], results[i]
+				}
+			}
+		}
+	}
+
+	utils.Info("多尺度匹配完成，找到 %d 个匹配结果", len(results))
+	return results, nil
 }
 
 // ParseCompareMethod 解析对比方法参数
@@ -258,6 +488,8 @@ func ParseCompareMethod(method string) CompareMethod {
 		return HistogramComparison
 	case "similarity", "structural", "structuralsimilarity":
 		return StructuralSimilarity
+	case "multiscale", "multiscaletemplate":
+		return MultiScaleTemplate
 	default:
 		utils.Warn("Unknown comparison method '%s', using template matching", method)
 		return TemplateMatching
@@ -275,6 +507,8 @@ func GetMethodName(method CompareMethod) string {
 		return "Histogram Comparison"
 	case StructuralSimilarity:
 		return "Structural Similarity"
+	case MultiScaleTemplate:
+		return "Multi-Scale Template Matching"
 	default:
 		return "Unknown"
 	}
@@ -325,6 +559,53 @@ func imageToMat(img image.Image) (gocv.Mat, error) {
 	return mat, nil
 }
 
+// ToScreenCoordinates converts window-relative coordinates to screen coordinates
+func (m *MatchResult) ToScreenCoordinates(windowInfo *capture.WindowInfo) image.Point {
+	return image.Point{
+		X: windowInfo.Rect.Min.X + m.Location.X,
+		Y: windowInfo.Rect.Min.Y + m.Location.Y,
+	}
+}
+
+// ToScreenBoundingBox converts window-relative bounding box to screen coordinates
+func (m *MatchResult) ToScreenBoundingBox(windowInfo *capture.WindowInfo) image.Rectangle {
+	offsetX := windowInfo.Rect.Min.X
+	offsetY := windowInfo.Rect.Min.Y
+	return image.Rectangle{
+		Min: image.Point{
+			X: m.BoundingBox.Min.X + offsetX,
+			Y: m.BoundingBox.Min.Y + offsetY,
+		},
+		Max: image.Point{
+			X: m.BoundingBox.Max.X + offsetX,
+			Y: m.BoundingBox.Max.Y + offsetY,
+		},
+	}
+}
+
+// ClickAtMatch performs a mouse click at the matched location
+func (m *MatchResult) ClickAtMatch(windowInfo *capture.WindowInfo, options *mouse.ClickOptions) error {
+	screenCoords := m.ToScreenCoordinates(windowInfo)
+	clicker := mouse.NewMouseClicker()
+	return clicker.BackgroundClick(screenCoords.X, screenCoords.Y, options)
+}
+
+// LeftClickAtMatch performs a left mouse click at the matched location
+func (m *MatchResult) LeftClickAtMatch(windowInfo *capture.WindowInfo) error {
+	return m.ClickAtMatch(windowInfo, &mouse.ClickOptions{
+		Button: mouse.LeftButton,
+		Delay:  50,
+	})
+}
+
+// RightClickAtMatch performs a right mouse click at the matched location
+func (m *MatchResult) RightClickAtMatch(windowInfo *capture.WindowInfo) error {
+	return m.ClickAtMatch(windowInfo, &mouse.ClickOptions{
+		Button: mouse.RightButton,
+		Delay:  50,
+	})
+}
+
 // CompareImages 便捷函数
 func CompareImages(img1, img2 image.Image, method CompareMethod) (*MatchResult, error) {
 	comparer := NewImageComparer(method)
@@ -338,4 +619,72 @@ func CalculateSimilarity(img1, img2 image.Image) (float64, error) {
 		return 0, err
 	}
 	return result.Similarity, nil
+}
+
+// MultiScaleTemplateMatch 多尺度模板匹配便利函数
+func MultiScaleTemplateMatch(source, template image.Image, config *MultiScaleConfig) (*MatchResult, error) {
+	comparer := NewImageComparerWithConfig(MultiScaleTemplate, config)
+	return comparer.CompareImages(source, template)
+}
+
+// MultiScaleTemplateMatchAll 多尺度模板匹配 - 返回所有结果
+func MultiScaleTemplateMatchAll(source, template image.Image, config *MultiScaleConfig) ([]*MatchResult, error) {
+	if config == nil {
+		config = DefaultMultiScaleConfig()
+	}
+
+	// 将Go image转换为OpenCV Mat
+	sourceMat, err := imageToMat(source)
+	if err != nil {
+		return nil, utils.WrapError(err, "转换源图片失败")
+	}
+	defer sourceMat.Close()
+
+	templateMat, err := imageToMat(template)
+	if err != nil {
+		return nil, utils.WrapError(err, "转换模板图片失败")
+	}
+	defer templateMat.Close()
+
+	comparer := NewImageComparerWithConfig(MultiScaleTemplate, config)
+	return comparer.MultiScaleTemplateMatchingAll(sourceMat, templateMat)
+}
+
+// FindAndClick finds template in source image and performs click action
+func FindAndClick(source, template image.Image, windowInfo *capture.WindowInfo, method CompareMethod, options *mouse.ClickOptions) (*MatchResult, error) {
+	result, err := CompareImages(source, template, method)
+	if err != nil {
+		return nil, utils.WrapError(err, "图像对比失败")
+	}
+
+	if result.Similarity == 0 {
+		return result, utils.WrapError(nil, "未找到匹配的图像")
+	}
+
+	err = result.ClickAtMatch(windowInfo, options)
+	if err != nil {
+		return result, utils.WrapError(err, "点击失败")
+	}
+
+	utils.Info("图像匹配成功并完成点击: 相似度%.4f, 位置(%d,%d)",
+		result.Similarity, result.Location.X, result.Location.Y)
+	return result, nil
+}
+
+// FindAndLeftClick finds template and performs left click
+func FindAndLeftClick(source, template image.Image, windowInfo *capture.WindowInfo, method CompareMethod) (*MatchResult, error) {
+	options := &mouse.ClickOptions{
+		Button: mouse.LeftButton,
+		Delay:  50,
+	}
+	return FindAndClick(source, template, windowInfo, method, options)
+}
+
+// FindAndRightClick finds template and performs right click
+func FindAndRightClick(source, template image.Image, windowInfo *capture.WindowInfo, method CompareMethod) (*MatchResult, error) {
+	options := &mouse.ClickOptions{
+		Button: mouse.RightButton,
+		Delay:  50,
+	}
+	return FindAndClick(source, template, windowInfo, method, options)
 }

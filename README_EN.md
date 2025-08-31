@@ -26,11 +26,14 @@ A cross-platform Go tool framework providing process management, screen capture,
 ### 🖼️ Image Processing Module
 - Integrates GoCV library for image comparison functionality
 - Provides image similarity calculation methods
+- **Smart Coordinate System**: Returns window-relative coordinates, automatically convertible to screen absolute coordinates
+- **One-Stop Match & Click**: Can perform mouse clicks directly after image matching
 - Supports multiple comparison algorithms:
   - Template Matching
   - Feature Matching
   - Histogram Comparison
   - Structural Similarity
+  - Multi-Scale Template Matching
 
 ### 🖱️ Mouse Simulation Module
 - Cross-platform background mouse clicking functionality
@@ -120,23 +123,33 @@ func main() {
         panic(err)
     }
 
-    // 5. Image Comparison
-    img1, _ := image.LoadImage("image1.png")
-    img2, _ := image.LoadImage("image2.png")
-    similarity, err := image.CalculateSimilarity(img1, img2)
+    // 5. Image Comparison and Smart Clicking
+    template, _ := image.LoadImage("button_template.png")
+    
+    // Method 1: Traditional approach
+    result, err := image.CompareImages(img, template, image.TemplateMatching)
     if err != nil {
         panic(err)
     }
-    fmt.Printf("Image similarity: %.2f\n", similarity)
-
-    // 6. Mouse Simulation Click (within window coordinates)
-    clickX := windowInfo.Rect.Min.X + 100 // Relative position within window
-    clickY := windowInfo.Rect.Min.Y + 100
-    err = mouse.BackgroundLeftClick(clickX, clickY)
+    fmt.Printf("Image similarity: %.2f, Window coords: (%d, %d)\n", 
+        result.Similarity, result.Location.X, result.Location.Y)
+    
+    // Convert to screen coordinates
+    screenCoords := result.ToScreenCoordinates(windowInfo)
+    fmt.Printf("Screen coords: (%d, %d)\n", screenCoords.X, screenCoords.Y)
+    
+    // Click directly at matched location
+    err = result.LeftClickAtMatch(windowInfo)
     if err != nil {
         panic(err)
     }
-    fmt.Println("Background click completed")
+    
+    // Method 2: One-stop match and click
+    result, err = image.FindAndLeftClick(img, template, windowInfo, image.TemplateMatching)
+    if err != nil {
+        panic(err)
+    }
+    fmt.Println("Image matching and clicking completed")
 }
 ```
 
@@ -188,10 +201,31 @@ windowInfo, err := capture.GetWindowInfoByPID(pid)
 // Create image comparer
 comparer := image.NewImageComparer(image.TemplateMatching)
 
-// Compare images
+// Compare images (returns window-relative coordinates)
 result, err := comparer.CompareImages(img1, img2)
-fmt.Printf("Similarity: %.2f, Location: (%d, %d)\n", 
+fmt.Printf("Similarity: %.2f, Window coords: (%d, %d)\n", 
     result.Similarity, result.Location.X, result.Location.Y)
+
+// Coordinate conversion
+windowInfo, _ := capture.GetWindowInfoByPID(pid)
+screenCoords := result.ToScreenCoordinates(windowInfo)
+screenBBox := result.ToScreenBoundingBox(windowInfo)
+
+// Smart clicking functionality
+err = result.LeftClickAtMatch(windowInfo)      // Left click
+err = result.RightClickAtMatch(windowInfo)     // Right click
+err = result.ClickAtMatch(windowInfo, options) // Custom click
+
+// One-stop match and click
+result, err = image.FindAndLeftClick(source, template, windowInfo, image.TemplateMatching)
+result, err = image.FindAndRightClick(source, template, windowInfo, image.TemplateMatching)
+result, err = image.FindAndClick(source, template, windowInfo, image.TemplateMatching, options)
+
+// Multi-scale template matching
+config := image.DefaultMultiScaleConfig()
+config.MinScale = 0.8
+config.MaxScale = 1.5
+result, err = image.MultiScaleTemplateMatch(source, template, config)
 
 // Load image file
 img, err := image.LoadImage("example.png")
