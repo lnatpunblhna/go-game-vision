@@ -19,23 +19,26 @@ var (
 	procGetCursorPos     = user32.NewProc("GetCursorPos")
 )
 
+// Windows mouse input constants
 const (
-	INPUT_MOUSE            = 0
-	MOUSEEVENTF_LEFTDOWN   = 0x0002
-	MOUSEEVENTF_LEFTUP     = 0x0004
-	MOUSEEVENTF_RIGHTDOWN  = 0x0008
-	MOUSEEVENTF_RIGHTUP    = 0x0010
-	MOUSEEVENTF_MIDDLEDOWN = 0x0020
-	MOUSEEVENTF_MIDDLEUP   = 0x0040
-	MOUSEEVENTF_ABSOLUTE   = 0x8000
-	SM_CXSCREEN            = 0
-	SM_CYSCREEN            = 1
+	INPUT_MOUSE            = 0      // The event is a mouse event
+	MOUSEEVENTF_LEFTDOWN   = 0x0002 // The left button is down
+	MOUSEEVENTF_LEFTUP     = 0x0004 // The left button is up
+	MOUSEEVENTF_RIGHTDOWN  = 0x0008 // The right button is down
+	MOUSEEVENTF_RIGHTUP    = 0x0010 // The right button is up
+	MOUSEEVENTF_MIDDLEDOWN = 0x0020 // The middle button is down
+	MOUSEEVENTF_MIDDLEUP   = 0x0040 // The middle button is up
+	MOUSEEVENTF_ABSOLUTE   = 0x8000 // Coordinates are mapped to absolute coordinates
+	SM_CXSCREEN            = 0      // System metrics: screen width
+	SM_CYSCREEN            = 1      // System metrics: screen height
 )
 
+// POINT defines a point with integer coordinates
 type POINT struct {
 	X, Y int32
 }
 
+// MOUSEINPUT contains information about a simulated mouse event
 type MOUSEINPUT struct {
 	Dx          int32
 	Dy          int32
@@ -45,6 +48,7 @@ type MOUSEINPUT struct {
 	DwExtraInfo uintptr
 }
 
+// INPUT contains information about a simulated input event
 type INPUT struct {
 	Type uint32
 	_    [4]byte // padding for union alignment

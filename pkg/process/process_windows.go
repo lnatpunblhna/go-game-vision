@@ -22,13 +22,15 @@ var (
 	procGetModuleFileNameEx      = psapi.NewProc("GetModuleFileNameExW")
 )
 
+// Windows process constants
 const (
-	TH32CS_SNAPPROCESS        = 0x00000002
-	PROCESS_QUERY_INFORMATION = 0x0400
-	PROCESS_VM_READ           = 0x0010
-	MAX_PATH                  = 260
+	TH32CS_SNAPPROCESS        = 0x00000002 // Include all processes in the snapshot
+	PROCESS_QUERY_INFORMATION = 0x0400     // Required to retrieve certain process information
+	PROCESS_VM_READ           = 0x0010     // Required to read memory using ReadProcessMemory
+	MAX_PATH                  = 260        // Maximum path length in Windows
 )
 
+// PROCESSENTRY32 describes an entry from a list of the processes residing in the system address space
 type PROCESSENTRY32 struct {
 	dwSize              uint32
 	cntUsage            uint32

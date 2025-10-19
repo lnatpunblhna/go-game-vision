@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
 )
 
 // LogLevel defines log levels
@@ -18,23 +19,33 @@ const (
 )
 
 var (
+	logMu           sync.RWMutex
 	currentLogLevel = INFO
 	enableLogging   = true
 )
 
 // SetLogLevel sets the global log level
 func SetLogLevel(level LogLevel) {
+	logMu.Lock()
+	defer logMu.Unlock()
 	currentLogLevel = level
 }
 
 // SetLoggingEnabled enables or disables logging
 func SetLoggingEnabled(enabled bool) {
+	logMu.Lock()
+	defer logMu.Unlock()
 	enableLogging = enabled
 }
 
 // logOutput outputs log message if logging is enabled and level is appropriate
 func logOutput(level LogLevel, levelName, format string, args ...interface{}) {
-	if !enableLogging || level < currentLogLevel {
+	logMu.RLock()
+	enabled := enableLogging
+	logLevel := currentLogLevel
+	logMu.RUnlock()
+
+	if !enabled || level < logLevel {
 		return
 	}
 

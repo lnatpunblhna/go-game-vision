@@ -1,11 +1,13 @@
 package image
 
 import (
+	"fmt"
 	"image"
 	_ "image/jpeg" // 导入jpeg解码器
 	_ "image/png"  // 导入png解码器
 	"math"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/lnatpunblhna/go-game-vision/pkg/capture"
@@ -23,6 +25,26 @@ const (
 	HistogramComparison                       // Histogram comparison
 	StructuralSimilarity                      // Structural similarity
 	MultiScaleTemplate                        // Multi-scale template matching
+)
+
+// Image processing constants
+const (
+	maxImageWidth  = 32768     // Maximum image width (to prevent overflow)
+	maxImageHeight = 32768     // Maximum image height
+	maxImagePixels = 268435456 // Maximum total pixels (16384 * 16384)
+
+	// Feature matching constants
+	featureDistanceScale = 100.0 // Scale factor for feature distance to similarity conversion
+
+	// Histogram constants
+	histChannelH    = 0     // Hue channel index
+	histChannelS    = 1     // Saturation channel index
+	histSizeH       = 50    // Histogram bins for Hue channel
+	histSizeS       = 60    // Histogram bins for Saturation channel
+	histRangeHueMin = 0.0   // Minimum Hue value
+	histRangeHueMax = 180.0 // Maximum Hue value (OpenCV uses 0-180 for Hue)
+	histRangeSatMin = 0.0   // Minimum Saturation value
+	histRangeSatMax = 256.0 // Maximum Saturation value
 )
 
 // MatchResult matching result
@@ -82,6 +104,11 @@ func NewImageComparerWithConfig(method CompareMethod, config *MultiScaleConfig) 
 
 // CompareImages 对比两张图片
 func (ic *ImageComparer) CompareImages(img1, img2 image.Image) (*MatchResult, error) {
+	// Validate input images
+	if img1 == nil || img2 == nil {
+		return nil, fmt.Errorf("input images cannot be nil")
+	}
+
 	// 将Go image转换为OpenCV Mat
 	mat1, err := imageToMat(img1)
 	if err != nil {
@@ -186,7 +213,7 @@ func (ic *ImageComparer) featureMatching(img1, img2 gocv.Mat) (*MatchResult, err
 	avgDistance := totalDistance / float64(len(matches))
 
 	// 将距离转换为相似度 (距离越小，相似度越高)
-	similarity := math.Max(0, 1.0-avgDistance/100.0)
+	similarity := math.Max(0, 1.0-avgDistance/featureDistanceScale)
 
 	// 计算匹配点的中心位置
 	var centerX, centerY float64
@@ -238,9 +265,9 @@ func (ic *ImageComparer) histogramComparison(img1, img2 gocv.Mat) (*MatchResult,
 	defer mask.Close()
 
 	// 设置直方图参数
-	channels := []int{0, 1} // H和S通道
-	histSize := []int{50, 60}
-	ranges := []float64{0, 180, 0, 256}
+	channels := []int{histChannelH, histChannelS} // H和S通道
+	histSize := []int{histSizeH, histSizeS}
+	ranges := []float64{histRangeHueMin, histRangeHueMax, histRangeSatMin, histRangeSatMax}
 
 	gocv.CalcHist([]gocv.Mat{hsv1}, channels, mask, &hist1, histSize, ranges, false)
 	gocv.CalcHist([]gocv.Mat{hsv2}, channels, mask, &hist2, histSize, ranges, false)
@@ -462,16 +489,10 @@ func (ic *ImageComparer) MultiScaleTemplateMatchingAll(source, template gocv.Mat
 		}
 	}
 
-	// 按相似度排序
-	if len(results) > 1 {
-		for i := 0; i < len(results)-1; i++ {
-			for j := i + 1; j < len(results); j++ {
-				if results[i].Similarity < results[j].Similarity {
-					results[i], results[j] = results[j], results[i]
-				}
-			}
-		}
-	}
+	// 按相似度排序 (降序)
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Similarity > results[j].Similarity
+	})
 
 	utils.Info("多尺度匹配完成，找到 %d 个匹配结果", len(results))
 	return results, nil
@@ -532,9 +553,25 @@ func LoadImage(filename string) (image.Image, error) {
 
 // imageToMat 将Go image转换为OpenCV Mat
 func imageToMat(img image.Image) (gocv.Mat, error) {
+	if img == nil {
+		return gocv.NewMat(), fmt.Errorf("image cannot be nil")
+	}
+
 	bounds := img.Bounds()
 	width := bounds.Max.X - bounds.Min.X
 	height := bounds.Max.Y - bounds.Min.Y
+
+	// Validate image dimensions to prevent overflow
+	if width <= 0 || height <= 0 {
+		return gocv.NewMat(), fmt.Errorf("invalid image dimensions: %dx%d", width, height)
+	}
+	if width > maxImageWidth || height > maxImageHeight {
+		return gocv.NewMat(), fmt.Errorf("image too large: %dx%d (max: %dx%d)", width, height, maxImageWidth, maxImageHeight)
+	}
+	totalPixels := int64(width) * int64(height)
+	if totalPixels > maxImagePixels {
+		return gocv.NewMat(), fmt.Errorf("image has too many pixels: %d (max: %d)", totalPixels, maxImagePixels)
+	}
 
 	// 创建字节数组
 	data := make([]byte, width*height*3)

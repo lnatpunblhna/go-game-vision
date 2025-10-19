@@ -39,19 +39,22 @@ var (
 	procGetSystemMetrics         = user32.NewProc("GetSystemMetrics")
 )
 
+// Windows GDI constants
 const (
-	SRCCOPY              = 0x00CC0020
-	DIB_RGB_COLORS       = 0
-	PW_CLIENTONLY        = 0x00000001
-	PW_RENDERFULLCONTENT = 0x00000002
-	SM_CXSCREEN          = 0
-	SM_CYSCREEN          = 1
+	SRCCOPY              = 0x00CC0020 // BitBlt raster operation: source copy
+	DIB_RGB_COLORS       = 0          // RGB color table identifiers
+	PW_CLIENTONLY        = 0x00000001 // PrintWindow flag: client area only
+	PW_RENDERFULLCONTENT = 0x00000002 // PrintWindow flag: render full content
+	SM_CXSCREEN          = 0          // System metrics: screen width
+	SM_CYSCREEN          = 1          // System metrics: screen height
 )
 
+// RECT defines a rectangle with integer coordinates
 type RECT struct {
 	Left, Top, Right, Bottom int32
 }
 
+// BITMAPINFOHEADER contains information about the dimensions and color format of a DIB
 type BITMAPINFOHEADER struct {
 	BiSize          uint32
 	BiWidth         int32
@@ -66,6 +69,7 @@ type BITMAPINFOHEADER struct {
 	BiClrImportant  uint32
 }
 
+// BITMAPINFO defines the dimensions and color information for a DIB
 type BITMAPINFO struct {
 	BmiHeader BITMAPINFOHEADER
 	BmiColors [1]uint32
@@ -111,7 +115,7 @@ func (w *WindowsCapture) CaptureWindowByHandle(handle uintptr, options *CaptureO
 	var rect RECT
 	ret, _, _ := procGetWindowRect.Call(handle, uintptr(unsafe.Pointer(&rect)))
 	if ret == 0 {
-		return nil, fmt.Errorf("failed to get window rectangle")
+		return nil, utils.WrapError(nil, "failed to get window rectangle")
 	}
 
 	width := int(rect.Right - rect.Left)
@@ -131,16 +135,28 @@ func (w *WindowsCapture) CaptureWindowByHandle(handle uintptr, options *CaptureO
 
 // captureWindowWithPrintWindow Using PrintWindow API to take screenshots (supports obscured windows)
 func (w *WindowsCapture) captureWindowWithPrintWindow(handle uintptr, width, height int) (image.Image, error) {
-	hdc, _, _ := procGetDC.Call(0)
+	hdc, _, err := procGetDC.Call(0)
+	if hdc == 0 {
+		return nil, utils.WrapError(err, "GetDC failed")
+	}
 	defer procReleaseDC.Call(0, hdc)
 
-	memDC, _, _ := procCreateCompatibleDC.Call(hdc)
+	memDC, _, err := procCreateCompatibleDC.Call(hdc)
+	if memDC == 0 {
+		return nil, utils.WrapError(err, "CreateCompatibleDC failed")
+	}
 	defer procDeleteDC.Call(memDC)
 
-	bitmap, _, _ := procCreateCompatibleBitmap.Call(hdc, uintptr(width), uintptr(height))
+	bitmap, _, err := procCreateCompatibleBitmap.Call(hdc, uintptr(width), uintptr(height))
+	if bitmap == 0 {
+		return nil, utils.WrapError(err, "CreateCompatibleBitmap failed")
+	}
 	defer procDeleteObject.Call(bitmap)
 
-	procSelectObject.Call(memDC, bitmap)
+	oldBitmap, _, _ := procSelectObject.Call(memDC, bitmap)
+	if oldBitmap == 0 {
+		return nil, utils.WrapError(nil, "SelectObject failed")
+	}
 
 	// Use PrintWindow to capture window content
 	ret, _, _ := procPrintWindow.Call(handle, memDC, PW_RENDERFULLCONTENT)
@@ -154,20 +170,32 @@ func (w *WindowsCapture) captureWindowWithPrintWindow(handle uintptr, width, hei
 
 // captureWindowWithBitBlt Taking screenshots using the BitBlt API
 func (w *WindowsCapture) captureWindowWithBitBlt(handle uintptr, width, height int) (image.Image, error) {
-	windowDC, _, _ := procGetDC.Call(handle)
+	windowDC, _, err := procGetDC.Call(handle)
+	if windowDC == 0 {
+		return nil, utils.WrapError(err, "GetDC failed")
+	}
 	defer procReleaseDC.Call(handle, windowDC)
 
-	memDC, _, _ := procCreateCompatibleDC.Call(windowDC)
+	memDC, _, err := procCreateCompatibleDC.Call(windowDC)
+	if memDC == 0 {
+		return nil, utils.WrapError(err, "CreateCompatibleDC failed")
+	}
 	defer procDeleteDC.Call(memDC)
 
-	bitmap, _, _ := procCreateCompatibleBitmap.Call(windowDC, uintptr(width), uintptr(height))
+	bitmap, _, err := procCreateCompatibleBitmap.Call(windowDC, uintptr(width), uintptr(height))
+	if bitmap == 0 {
+		return nil, utils.WrapError(err, "CreateCompatibleBitmap failed")
+	}
 	defer procDeleteObject.Call(bitmap)
 
-	procSelectObject.Call(memDC, bitmap)
+	oldBitmap, _, _ := procSelectObject.Call(memDC, bitmap)
+	if oldBitmap == 0 {
+		return nil, utils.WrapError(nil, "SelectObject failed")
+	}
 
 	ret, _, _ := procBitBlt.Call(memDC, 0, 0, uintptr(width), uintptr(height), windowDC, 0, 0, SRCCOPY)
 	if ret == 0 {
-		return nil, fmt.Errorf("BitBlt failed")
+		return nil, utils.WrapError(nil, "BitBlt failed")
 	}
 
 	return w.bitmapToImage(bitmap, width, height)
@@ -175,7 +203,10 @@ func (w *WindowsCapture) captureWindowWithBitBlt(handle uintptr, width, height i
 
 // bitmapToImage Convert Windows bitmap to Go image
 func (w *WindowsCapture) bitmapToImage(bitmap uintptr, width, height int) (image.Image, error) {
-	hdc, _, _ := procGetDC.Call(0)
+	hdc, _, err := procGetDC.Call(0)
+	if hdc == 0 {
+		return nil, utils.WrapError(err, "GetDC failed")
+	}
 	defer procReleaseDC.Call(0, hdc)
 
 	var bi BITMAPINFO
@@ -200,7 +231,7 @@ func (w *WindowsCapture) bitmapToImage(bitmap uintptr, width, height int) (image
 	)
 
 	if ret == 0 {
-		return nil, fmt.Errorf("GetDIBits failed")
+		return nil, utils.WrapError(nil, "GetDIBits failed")
 	}
 
 	// Create RGBA image
@@ -241,7 +272,10 @@ func (w *WindowsCapture) GetWindowsByPID(pid uint32) ([]WindowInfo, error) {
 		return 1 // 继续枚举
 	})
 
-	procEnumWindows.Call(callback, 0)
+	ret, _, err := procEnumWindows.Call(callback, 0)
+	if ret == 0 {
+		return nil, utils.WrapError(err, "EnumWindows failed")
+	}
 	return windowInfos, nil
 }
 
@@ -290,17 +324,17 @@ func (w *WindowsCapture) isWindowVisible(hwnd uintptr) bool {
 
 // GetWindowInfoByPID gets window information by process ID
 func (w *WindowsCapture) GetWindowInfoByPID(pid uint32) (*WindowInfo, error) {
-	windows, err := w.GetWindowsByPID(pid)
+	windowList, err := w.GetWindowsByPID(pid)
 	if err != nil {
 		return nil, utils.WrapError(err, "failed to get windows by PID")
 	}
 
-	if len(windows) == 0 {
+	if len(windowList) == 0 {
 		return nil, utils.ErrWindowNotFound
 	}
 
 	// 返回第一个可见窗口，或者如果没有可见窗口则返回第一个窗口
-	for _, window := range windows {
+	for _, window := range windowList {
 		if w.isWindowVisible(window.Handle) {
 			window.IsHidden = false
 			return &window, nil
@@ -308,6 +342,6 @@ func (w *WindowsCapture) GetWindowInfoByPID(pid uint32) (*WindowInfo, error) {
 	}
 
 	// 没有可见窗口，返回第一个窗口并标记为隐藏
-	windows[0].IsHidden = true
-	return &windows[0], nil
+	windowList[0].IsHidden = true
+	return &windowList[0], nil
 }
