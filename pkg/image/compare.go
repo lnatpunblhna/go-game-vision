@@ -621,13 +621,27 @@ func (m *MatchResult) ToScreenBoundingBox(windowInfo *capture.WindowInfo) image.
 }
 
 // ClickAtMatch performs a mouse click at the matched location
+// Note: This may activate the target window on some platforms
 func (m *MatchResult) ClickAtMatch(windowInfo *capture.WindowInfo, options *mouse.ClickOptions) error {
 	screenCoords := m.ToScreenCoordinates(windowInfo)
 	clicker := mouse.NewMouseClicker()
 	return clicker.BackgroundClick(screenCoords.X, screenCoords.Y, options)
 }
 
+// PostMessageClickAtMatch performs a true background click using PostMessage API
+// This method does NOT activate the target window (Windows only)
+func (m *MatchResult) PostMessageClickAtMatch(windowInfo *capture.WindowInfo, options *mouse.ClickOptions) error {
+	if windowInfo.Handle == 0 {
+		return fmt.Errorf("invalid window handle")
+	}
+
+	// Use window-relative coordinates (Location already contains window-relative coordinates)
+	clicker := mouse.NewMouseClicker()
+	return clicker.PostMessageClick(windowInfo.Handle, m.Location.X, m.Location.Y, options)
+}
+
 // LeftClickAtMatch performs a left mouse click at the matched location
+// Note: This may activate the target window
 func (m *MatchResult) LeftClickAtMatch(windowInfo *capture.WindowInfo) error {
 	return m.ClickAtMatch(windowInfo, &mouse.ClickOptions{
 		Button: mouse.LeftButton,
@@ -635,9 +649,28 @@ func (m *MatchResult) LeftClickAtMatch(windowInfo *capture.WindowInfo) error {
 	})
 }
 
+// PostMessageLeftClickAtMatch performs a true background left click using PostMessage API
+// This method does NOT activate the target window (Windows only)
+func (m *MatchResult) PostMessageLeftClickAtMatch(windowInfo *capture.WindowInfo) error {
+	return m.PostMessageClickAtMatch(windowInfo, &mouse.ClickOptions{
+		Button: mouse.LeftButton,
+		Delay:  50,
+	})
+}
+
 // RightClickAtMatch performs a right mouse click at the matched location
+// Note: This may activate the target window
 func (m *MatchResult) RightClickAtMatch(windowInfo *capture.WindowInfo) error {
 	return m.ClickAtMatch(windowInfo, &mouse.ClickOptions{
+		Button: mouse.RightButton,
+		Delay:  50,
+	})
+}
+
+// PostMessageRightClickAtMatch performs a true background right click using PostMessage API
+// This method does NOT activate the target window (Windows only)
+func (m *MatchResult) PostMessageRightClickAtMatch(windowInfo *capture.WindowInfo) error {
+	return m.PostMessageClickAtMatch(windowInfo, &mouse.ClickOptions{
 		Button: mouse.RightButton,
 		Delay:  50,
 	})

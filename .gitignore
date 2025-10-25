@@ -1,4 +1,130 @@
-.idea
-build
+# ============================================
+# IDE 和编辑器
+# ============================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# ============================================
+# 操作系统
+# ============================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+
+# ============================================
+# Go 相关
+# ============================================
+# 二进制文件
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# 测试
+*.test
+*.out
+coverage.txt
+coverage.html
+*.prof
+
+# 依赖
+vendor/
+
+# Go 工作区文件 (Go 1.18+)
+go.work
+go.work.sum
+
+# ============================================
+# 构建产物
+# ============================================
+build/
+dist/
+bin/
+*.app
+
+# ============================================
+# 临时文件和日志
+# ============================================
+*.log
+*.tmp
+nul
+tmp/
+temp/
+
+# ============================================
+# Claude Code 私有配置
+# ============================================
+# 不提交 Claude Code 配置到公共仓库
+.claude/
 CLAUDE.md
-.claude
+
+# ============================================
+# 测试数据和截图
+# ============================================
+# 测试生成的截图
+testdata/images/screenshots/*_generated.png
+testdata/images/screenshots/test_*.png
+testdata/images/screenshots/nikke_*.png
+
+# 保留 .gitkeep 文件
+!testdata/images/screenshots/.gitkeep
+!testdata/images/template/.gitkeep
+
+# 临时测试文件
+tests/*.png
+tests/*.jpg
+tests/*.jpeg
+tests/*.gif
+tests/*.bmp
+tests/temp_*
+
+# ============================================
+# 项目特定
+# ============================================
+# 示例程序生成的文件
+examples/*/output/
+examples/*/*.png
+examples/*/*.jpg
+
+# 文档构建
+docs/_build/
+docs/.doctrees/
+
+# ============================================
+# 其他
+# ============================================
+# 备份文件
+*.bak
+*.backup
+*~
+
+# 压缩文件（除非是项目资源）
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# 私密信息
+secrets/
+credentials/
+*.key
+*.pem
+config.local.*

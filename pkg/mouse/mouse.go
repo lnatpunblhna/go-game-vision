@@ -31,8 +31,10 @@ func (mb MouseButton) String() string {
 
 // ClickOptions represents mouse click options
 type ClickOptions struct {
-	Button MouseButton // 鼠标按键类型
-	Delay  int         // 点击延迟（毫秒）
+	Button       MouseButton // 鼠标按键类型
+	Delay        int         // 点击延迟（毫秒）
+	RandomDelay  bool        // 是否添加随机延迟（5-15ms）
+	RestoreFocus bool        // 点击后是否恢复原窗口焦点
 }
 
 // MouseClicker interface defines mouse clicking operations
@@ -40,7 +42,15 @@ type MouseClicker interface {
 	// BackgroundClick performs a background mouse click at specified coordinates
 	// x, y: screen coordinates
 	// options: click options (button type, delay, etc.)
+	// Note: This may activate the target window on some platforms
 	BackgroundClick(x, y int, options *ClickOptions) error
+
+	// PostMessageClick performs a true background click using window message posting
+	// hwnd: window handle
+	// x, y: coordinates relative to the window's client area
+	// options: click options (button type, delay, etc.)
+	// Note: This will NOT activate the window (Windows only)
+	PostMessageClick(hwnd uintptr, x, y int, options *ClickOptions) error
 
 	// GetScreenSize returns the screen dimensions
 	GetScreenSize() (width, height int, err error)
