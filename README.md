@@ -6,7 +6,7 @@
 
 一个功能强大的跨平台 Go 自动化框架，为 Windows 和 macOS 提供进程管理、屏幕截图、图像识别和智能鼠标模拟。
 
-[![Go Version](https://img.shields.io/badge/Go-%3E%3D1.19-blue)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-%3E%3D1.23-blue)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey)](https://github.com/lnatpunblhna/go-game-vision)
 
@@ -54,7 +54,7 @@
 ## 📦 安装
 
 ### 前置要求
-- **Go**: 1.19 或更高版本
+- **Go**: 1.23 或更高版本
 - **系统**: Windows 10+ 或 macOS 10.14+
 - **OpenCV**: 图像处理功能依赖
 

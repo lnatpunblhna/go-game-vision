@@ -6,7 +6,7 @@ English | [中文](README.md)
 
 A powerful cross-platform Go automation framework providing process management, screen capture, image recognition, and intelligent mouse simulation for Windows and macOS.
 
-[![Go Version](https://img.shields.io/badge/Go-%3E%3D1.19-blue)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-%3E%3D1.23-blue)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey)](https://github.com/lnatpunblhna/go-game-vision)
 
@@ -54,7 +54,7 @@ A powerful cross-platform Go automation framework providing process management, 
 ## 📦 Installation
 
 ### Prerequisites
-- **Go**: 1.19 or higher
+- **Go**: 1.23 or higher
 - **System**: Windows 10+ or macOS 10.14+
 - **OpenCV**: Required for image processing features
 
