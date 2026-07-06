@@ -18,7 +18,14 @@ func init() {
 }
 
 // TestNikkeImageMatchAndClick 测试图像匹配并点击 email.png (使用多尺度匹配)
+//
+// 这是需要真实运行游戏窗口的端到端集成测试，依赖 Windows 上运行的 nikke.exe，
+// 因此在 -short 模式（CI）下跳过。
 func TestNikkeImageMatchAndClick(t *testing.T) {
+	if testing.Short() {
+		t.Skip("跳过需要真实游戏进程的集成测试（-short 模式）")
+	}
+
 	processName := "nikke.exe"
 	templatePath := "../testdata/images/template/email.png"
 
