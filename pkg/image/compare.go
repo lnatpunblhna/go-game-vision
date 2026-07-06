@@ -1,6 +1,7 @@
 package image
 
 import (
+	"errors"
 	"fmt"
 	"image"
 	_ "image/jpeg" // 导入jpeg解码器
@@ -15,6 +16,14 @@ import (
 	"github.com/lnatpunblhna/go-game-vision/pkg/utils"
 	"gocv.io/x/gocv"
 )
+
+// ErrNoMatch is returned by the find-and-click helpers when the best match
+// found is below the requested similarity threshold.
+var ErrNoMatch = errors.New("no image match found above threshold")
+
+// DefaultMatchThreshold is the default similarity threshold used by the
+// convenience find-and-click helpers (FindAndLeftClick / FindAndRightClick).
+const DefaultMatchThreshold = 0.8
 
 // CompareMethod image comparison method
 type CompareMethod int
@@ -34,7 +43,11 @@ const (
 	maxImagePixels = 268435456 // Maximum total pixels (16384 * 16384)
 
 	// Feature matching constants
-	featureDistanceScale = 100.0 // Scale factor for feature distance to similarity conversion
+	featureRatioTestThreshold = 0.75 // Lowe's ratio test threshold (nearest/second-nearest)
+
+	// SSIM constants (L = dynamic range for 8-bit images = 255)
+	ssimC1 = 6.5025  // (0.01 * 255)^2
+	ssimC2 = 58.5225 // (0.03 * 255)^2
 
 	// Histogram constants
 	histChannelH    = 0     // Hue channel index
@@ -140,6 +153,20 @@ func (ic *ImageComparer) CompareImages(img1, img2 image.Image) (*MatchResult, er
 
 // templateMatching 模板匹配
 func (ic *ImageComparer) templateMatching(source, template gocv.Mat) (*MatchResult, error) {
+	// OpenCV 的 MatchTemplate 要求模板尺寸不大于源图，否则会抛出异常导致崩溃。
+	if template.Cols() > source.Cols() || template.Rows() > source.Rows() {
+		utils.Warn("模板(%dx%d)大于源图(%dx%d)，无法进行模板匹配",
+			template.Cols(), template.Rows(), source.Cols(), source.Rows())
+		return &MatchResult{
+			Similarity:  0.0,
+			Location:    image.Point{},
+			Confidence:  0.0,
+			Method:      TemplateMatching,
+			Scale:       1.0,
+			BoundingBox: image.Rectangle{},
+		}, nil
+	}
+
 	result := gocv.NewMat()
 	defer result.Close()
 
@@ -168,70 +195,73 @@ func (ic *ImageComparer) templateMatching(source, template gocv.Mat) (*MatchResu
 }
 
 // featureMatching 特征点匹配
+//
+// 使用 SIFT + KNN(k=2) 匹配并应用 Lowe's ratio test 过滤误匹配。相似度定义为
+// “好匹配数 / 两图关键点数的较小值”，落在 [0,1]，比原先“1 - 平均距离/100”
+// 这种无理论依据的换算更能反映匹配质量。位置取好匹配在 img2(train) 中的质心。
 func (ic *ImageComparer) featureMatching(img1, img2 gocv.Mat) (*MatchResult, error) {
 	// 创建SIFT检测器
 	sift := gocv.NewSIFT()
 	defer sift.Close()
 
 	// 检测关键点和描述符
-	_, desc1 := sift.DetectAndCompute(img1, gocv.NewMat())
+	kp1, desc1 := sift.DetectAndCompute(img1, gocv.NewMat())
 	defer desc1.Close()
 
 	kp2, desc2 := sift.DetectAndCompute(img2, gocv.NewMat())
 	defer desc2.Close()
 
-	if desc1.Empty() || desc2.Empty() {
-		return &MatchResult{
-			Similarity: 0.0,
-			Location:   image.Point{},
-			Confidence: 0.0,
-			Method:     FeatureMatching,
-		}, nil
+	emptyResult := &MatchResult{
+		Similarity: 0.0,
+		Location:   image.Point{},
+		Confidence: 0.0,
+		Method:     FeatureMatching,
+		Scale:      1.0,
 	}
 
-	// 创建匹配器
+	if desc1.Empty() || desc2.Empty() || len(kp1) == 0 || len(kp2) == 0 {
+		return emptyResult, nil
+	}
+
+	// 创建匹配器并进行 KNN 匹配（每个查询点取最近的 2 个候选）
 	matcher := gocv.NewBFMatcher()
 	defer matcher.Close()
 
-	// 进行匹配
-	matches := matcher.Match(desc1, desc2)
-
-	if len(matches) == 0 {
-		return &MatchResult{
-			Similarity: 0.0,
-			Location:   image.Point{},
-			Confidence: 0.0,
-			Method:     FeatureMatching,
-		}, nil
+	knnMatches := matcher.KnnMatch(desc1, desc2, 2)
+	if len(knnMatches) == 0 {
+		return emptyResult, nil
 	}
 
-	// 计算平均距离作为相似度
-	totalDistance := 0.0
-	for _, match := range matches {
-		totalDistance += float64(match.Distance)
-	}
-	avgDistance := totalDistance / float64(len(matches))
-
-	// 将距离转换为相似度 (距离越小，相似度越高)
-	similarity := math.Max(0, 1.0-avgDistance/featureDistanceScale)
-
-	// 计算匹配点的中心位置
+	// Lowe's ratio test：最近邻明显优于次近邻才算“好匹配”
 	var centerX, centerY float64
-	validMatches := 0
-	for i, match := range matches {
-		if i < len(kp2) {
-			centerX += float64(kp2[match.TrainIdx].X)
-			centerY += float64(kp2[match.TrainIdx].Y)
-			validMatches++
+	goodMatches := 0
+	for _, m := range knnMatches {
+		if len(m) < 2 {
+			continue
+		}
+		if m[0].Distance < featureRatioTestThreshold*m[1].Distance {
+			trainIdx := m[0].TrainIdx
+			if trainIdx >= 0 && trainIdx < len(kp2) {
+				centerX += kp2[trainIdx].X
+				centerY += kp2[trainIdx].Y
+				goodMatches++
+			}
 		}
 	}
 
-	location := image.Point{}
-	if validMatches > 0 {
-		location = image.Point{
-			X: int(centerX / float64(validMatches)),
-			Y: int(centerY / float64(validMatches)),
-		}
+	if goodMatches == 0 {
+		return emptyResult, nil
+	}
+
+	minKeypoints := len(kp1)
+	if len(kp2) < minKeypoints {
+		minKeypoints = len(kp2)
+	}
+	similarity := math.Min(1.0, float64(goodMatches)/float64(minKeypoints))
+
+	location := image.Point{
+		X: int(centerX / float64(goodMatches)),
+		Y: int(centerY / float64(goodMatches)),
 	}
 
 	return &MatchResult{
@@ -289,7 +319,14 @@ func (ic *ImageComparer) histogramComparison(img1, img2 gocv.Mat) (*MatchResult,
 	}, nil
 }
 
-// structuralSimilarity 结构相似性对比
+// structuralSimilarity 结构相似性对比 (SSIM)
+//
+// 实现标准 SSIM 指标（全局单窗口版本）：
+//
+//	SSIM = ((2μxμy + C1)(2σxy + C2)) / ((μx² + μy² + C1)(σx² + σy² + C2))
+//
+// 其中 μ 为均值、σ² 为方差、σxy 为协方差，C1/C2 为稳定常数。结果范围约 [-1,1]，
+// 1 表示完全一致。相比旧实现（仅按平均绝对差近似），这是真正的结构相似性度量。
 func (ic *ImageComparer) structuralSimilarity(img1, img2 gocv.Mat) (*MatchResult, error) {
 	// 转换为灰度图
 	gray1 := gocv.NewMat()
@@ -300,31 +337,55 @@ func (ic *ImageComparer) structuralSimilarity(img1, img2 gocv.Mat) (*MatchResult
 	defer gray2.Close()
 	gocv.CvtColor(img2, &gray2, gocv.ColorBGRToGray)
 
-	// 确保图像大小相同
+	// 确保图像大小相同（SSIM 要求逐像素对齐）
 	if gray1.Rows() != gray2.Rows() || gray1.Cols() != gray2.Cols() {
 		gocv.Resize(gray2, &gray2, image.Point{X: gray1.Cols(), Y: gray1.Rows()}, 0, 0, gocv.InterpolationLinear)
 	}
 
-	// 简化的结构相似性计算
-	diff := gocv.NewMat()
-	defer diff.Close()
-	gocv.AbsDiff(gray1, gray2, &diff)
+	// 转为 32F 以避免乘积溢出
+	f1 := gocv.NewMat()
+	defer f1.Close()
+	gray1.ConvertTo(&f1, gocv.MatTypeCV32F)
 
-	mean := gocv.NewMat()
-	stddev := gocv.NewMat()
-	defer mean.Close()
-	defer stddev.Close()
+	f2 := gocv.NewMat()
+	defer f2.Close()
+	gray2.ConvertTo(&f2, gocv.MatTypeCV32F)
 
-	gocv.MeanStdDev(diff, &mean, &stddev)
+	mu1 := f1.Mean().Val1
+	mu2 := f2.Mean().Val1
 
-	// 灰度图只有一个通道，所以取第一个值即可
-	meanVal := mean.GetFloatAt(0, 0)
-	similarity := 1.0 - (float64(meanVal) / 255.0)
+	// E[x²], E[y²], E[xy]
+	f1sq := gocv.NewMat()
+	defer f1sq.Close()
+	gocv.Multiply(f1, f1, &f1sq)
+
+	f2sq := gocv.NewMat()
+	defer f2sq.Close()
+	gocv.Multiply(f2, f2, &f2sq)
+
+	f1f2 := gocv.NewMat()
+	defer f1f2.Close()
+	gocv.Multiply(f1, f2, &f1f2)
+
+	varX := f1sq.Mean().Val1 - mu1*mu1
+	varY := f2sq.Mean().Val1 - mu2*mu2
+	covXY := f1f2.Mean().Val1 - mu1*mu2
+
+	numerator := (2*mu1*mu2 + ssimC1) * (2*covXY + ssimC2)
+	denominator := (mu1*mu1 + mu2*mu2 + ssimC1) * (varX + varY + ssimC2)
+
+	ssim := 0.0
+	if denominator != 0 {
+		ssim = numerator / denominator
+	}
+
+	// SSIM 理论范围 [-1,1]，作为相似度对外裁剪到 [0,1]
+	similarity := math.Max(0, math.Min(1, ssim))
 
 	return &MatchResult{
-		Similarity:  math.Max(0, similarity),
+		Similarity:  similarity,
 		Location:    image.Point{},
-		Confidence:  math.Max(0, similarity),
+		Confidence:  similarity,
 		Method:      StructuralSimilarity,
 		Scale:       1.0,
 		BoundingBox: image.Rectangle{},
@@ -628,15 +689,36 @@ func (m *MatchResult) ClickAtMatch(windowInfo *capture.WindowInfo, options *mous
 	return clicker.BackgroundClick(screenCoords.X, screenCoords.Y, options)
 }
 
+// screenCoordClicker is an optional capability implemented by the Windows
+// clicker: it takes SCREEN coordinates and internally resolves the child window
+// under that point and converts to client-area coordinates via ScreenToClient.
+type screenCoordClicker interface {
+	PostMessageClickAtScreenCoords(parentHwnd uintptr, screenX, screenY int, options *mouse.ClickOptions) error
+}
+
 // PostMessageClickAtMatch performs a true background click using PostMessage API
-// This method does NOT activate the target window (Windows only)
+// This method does NOT activate the target window (Windows only).
+//
+// Coordinate handling: MatchResult.Location is relative to the captured image,
+// whose origin equals the window's top-left (GetWindowRect origin), i.e. it is
+// NON-client (window) space. WM_LBUTTONDOWN etc. expect CLIENT coordinates, so
+// we must convert. We do this by mapping to absolute screen coordinates and
+// letting the Windows clicker perform ScreenToClient. On platforms without that
+// capability we fall back to the raw path.
 func (m *MatchResult) PostMessageClickAtMatch(windowInfo *capture.WindowInfo, options *mouse.ClickOptions) error {
 	if windowInfo.Handle == 0 {
 		return fmt.Errorf("invalid window handle")
 	}
 
-	// Use window-relative coordinates (Location already contains window-relative coordinates)
 	clicker := mouse.NewMouseClicker()
+
+	// Preferred path (Windows): convert window-relative → screen → client.
+	if sc, ok := clicker.(screenCoordClicker); ok {
+		screen := m.ToScreenCoordinates(windowInfo)
+		return sc.PostMessageClickAtScreenCoords(windowInfo.Handle, screen.X, screen.Y, options)
+	}
+
+	// Fallback: pass coordinates through unchanged.
 	return clicker.PostMessageClick(windowInfo.Handle, m.Location.X, m.Location.Y, options)
 }
 
@@ -720,15 +802,27 @@ func MultiScaleTemplateMatchAll(source, template image.Image, config *MultiScale
 	return comparer.MultiScaleTemplateMatchingAll(sourceMat, templateMat)
 }
 
-// FindAndClick finds template in source image and performs click action
+// FindAndClick finds template in source image and clicks it, using the default
+// similarity threshold (DefaultMatchThreshold). If no match reaches the
+// threshold it returns the best result together with ErrNoMatch and does not
+// click. Use FindAndClickWithThreshold to supply a custom threshold.
 func FindAndClick(source, template image.Image, windowInfo *capture.WindowInfo, method CompareMethod, options *mouse.ClickOptions) (*MatchResult, error) {
+	return FindAndClickWithThreshold(source, template, windowInfo, method, DefaultMatchThreshold, options)
+}
+
+// FindAndClickWithThreshold finds template in source image and clicks only if
+// the match similarity is at least threshold. When no match reaches the
+// threshold it returns the best result together with ErrNoMatch and performs no
+// click.
+func FindAndClickWithThreshold(source, template image.Image, windowInfo *capture.WindowInfo, method CompareMethod, threshold float64, options *mouse.ClickOptions) (*MatchResult, error) {
 	result, err := CompareImages(source, template, method)
 	if err != nil {
 		return nil, utils.WrapError(err, "图像对比失败")
 	}
 
-	if result.Similarity == 0 {
-		return result, utils.WrapError(nil, "未找到匹配的图像")
+	if result.Similarity < threshold {
+		utils.Warn("最佳匹配相似度%.4f 低于阈值%.4f，跳过点击", result.Similarity, threshold)
+		return result, fmt.Errorf("%w: similarity %.4f < threshold %.4f", ErrNoMatch, result.Similarity, threshold)
 	}
 
 	err = result.ClickAtMatch(windowInfo, options)
@@ -741,20 +835,22 @@ func FindAndClick(source, template image.Image, windowInfo *capture.WindowInfo, 
 	return result, nil
 }
 
-// FindAndLeftClick finds template and performs left click
+// FindAndLeftClick finds template and performs a left click using the default
+// match threshold (DefaultMatchThreshold).
 func FindAndLeftClick(source, template image.Image, windowInfo *capture.WindowInfo, method CompareMethod) (*MatchResult, error) {
 	options := &mouse.ClickOptions{
 		Button: mouse.LeftButton,
 		Delay:  50,
 	}
-	return FindAndClick(source, template, windowInfo, method, options)
+	return FindAndClickWithThreshold(source, template, windowInfo, method, DefaultMatchThreshold, options)
 }
 
-// FindAndRightClick finds template and performs right click
+// FindAndRightClick finds template and performs a right click using the default
+// match threshold (DefaultMatchThreshold).
 func FindAndRightClick(source, template image.Image, windowInfo *capture.WindowInfo, method CompareMethod) (*MatchResult, error) {
 	options := &mouse.ClickOptions{
 		Button: mouse.RightButton,
 		Delay:  50,
 	}
-	return FindAndClick(source, template, windowInfo, method, options)
+	return FindAndClickWithThreshold(source, template, windowInfo, method, DefaultMatchThreshold, options)
 }
