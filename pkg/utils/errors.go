@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"errors"
 	"fmt"
 )
 
@@ -51,10 +52,9 @@ func WrapError(err error, message string) error {
 	return fmt.Errorf("%s: %w", message, err)
 }
 
-// IsError checks if error matches target error
+// IsError reports whether any error in err's chain matches target.
+// It delegates to errors.Is so that errors wrapped with WrapError (which uses
+// %w) are correctly matched against sentinel errors like ErrProcessNotFound.
 func IsError(err, target error) bool {
-	if err == nil || target == nil {
-		return err == target
-	}
-	return err.Error() == target.Error()
+	return errors.Is(err, target)
 }
