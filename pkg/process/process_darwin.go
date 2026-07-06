@@ -5,6 +5,7 @@ package process
 import (
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -31,7 +32,10 @@ func (d *DarwinProcessManager) GetProcessByName(name string, mode MatchMode) ([]
 		match := false
 		switch mode {
 		case ExactMatch:
-			match = proc.Name == name
+			// `ps -o comm` on macOS often returns the full executable path
+			// (e.g. /Applications/Foo.app/Contents/MacOS/Foo), so also compare
+			// against the basename so ExactMatch("Foo") still works.
+			match = proc.Name == name || filepath.Base(proc.Name) == name
 		case FuzzyMatch:
 			// 在名称和路径中都进行模糊匹配
 			nameLower := strings.ToLower(proc.Name)
