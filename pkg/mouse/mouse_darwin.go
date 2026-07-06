@@ -159,3 +159,17 @@ func (d *DarwinMouseClicker) IsValidCoordinate(x, y int) bool {
 	result := C.isValidCoordinate(C.double(x), C.double(y))
 	return result == 1
 }
+
+// PostMessageClick is not supported on macOS.
+//
+// The "post a message to a window without activating it" model is a Win32
+// concept (WM_LBUTTONDOWN/PostMessageW). macOS has no equivalent public API to
+// deliver synthetic mouse events to a specific window without the window/app
+// becoming active, so this method is intentionally unimplemented on darwin.
+//
+// Callers that need a click on macOS should use BackgroundClick with screen
+// coordinates instead.
+func (d *DarwinMouseClicker) PostMessageClick(hwnd uintptr, x, y int, options *ClickOptions) error {
+	return utils.WrapError(utils.ErrPlatformNotSupported,
+		"PostMessageClick is only available on Windows; use BackgroundClick on macOS")
+}

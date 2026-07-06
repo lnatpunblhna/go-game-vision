@@ -4,6 +4,7 @@ package mouse
 
 import (
 	"fmt"
+	"math/rand"
 	"time"
 	"unsafe"
 
@@ -25,21 +26,36 @@ var (
 	procGetWindowRect       = user32.NewProc("GetWindowRect")
 	procGetForegroundWindow = user32.NewProc("GetForegroundWindow")
 	procSetForegroundWindow = user32.NewProc("SetForegroundWindow")
+	procSetProcessDPIAware  = user32.NewProc("SetProcessDPIAware")
 )
+
+// init makes the process DPI-aware so that GetSystemMetrics / cursor / click
+// coordinates are reported in real (physical) pixels instead of being scaled by
+// the system DPI. Without this, on a 150% display the reported screen size and
+// click coordinates are off by the scale factor. Best-effort: ignored if the
+// call fails or the process is already DPI-aware.
+func init() {
+	procSetProcessDPIAware.Call()
+}
 
 // Windows mouse input constants
 const (
-	INPUT_MOUSE            = 0      // The event is a mouse event
-	MOUSEEVENTF_MOVE       = 0x0001 // Movement occurred
-	MOUSEEVENTF_LEFTDOWN   = 0x0002 // The left button is down
-	MOUSEEVENTF_LEFTUP     = 0x0004 // The left button is up
-	MOUSEEVENTF_RIGHTDOWN  = 0x0008 // The right button is down
-	MOUSEEVENTF_RIGHTUP    = 0x0010 // The right button is up
-	MOUSEEVENTF_MIDDLEDOWN = 0x0020 // The middle button is down
-	MOUSEEVENTF_MIDDLEUP   = 0x0040 // The middle button is up
-	MOUSEEVENTF_ABSOLUTE   = 0x8000 // Coordinates are mapped to absolute coordinates
-	SM_CXSCREEN            = 0      // System metrics: screen width
-	SM_CYSCREEN            = 1      // System metrics: screen height
+	INPUT_MOUSE             = 0      // The event is a mouse event
+	MOUSEEVENTF_MOVE        = 0x0001 // Movement occurred
+	MOUSEEVENTF_LEFTDOWN    = 0x0002 // The left button is down
+	MOUSEEVENTF_LEFTUP      = 0x0004 // The left button is up
+	MOUSEEVENTF_RIGHTDOWN   = 0x0008 // The right button is down
+	MOUSEEVENTF_RIGHTUP     = 0x0010 // The right button is up
+	MOUSEEVENTF_MIDDLEDOWN  = 0x0020 // The middle button is down
+	MOUSEEVENTF_MIDDLEUP    = 0x0040 // The middle button is up
+	MOUSEEVENTF_ABSOLUTE    = 0x8000 // Coordinates are mapped to absolute coordinates
+	MOUSEEVENTF_VIRTUALDESK = 0x4000 // Map absolute coords to the entire virtual desktop (multi-monitor)
+	SM_CXSCREEN             = 0      // System metrics: primary screen width
+	SM_CYSCREEN             = 1      // System metrics: primary screen height
+	SM_XVIRTUALSCREEN       = 76     // Left of the virtual screen (may be negative)
+	SM_YVIRTUALSCREEN       = 77     // Top of the virtual screen (may be negative)
+	SM_CXVIRTUALSCREEN      = 78     // Width of the virtual screen (all monitors)
+	SM_CYVIRTUALSCREEN      = 79     // Height of the virtual screen (all monitors)
 )
 
 // Windows message constants for PostMessage/SendMessage
@@ -106,15 +122,15 @@ func (w *WindowsMouseClicker) BackgroundClick(x, y int, options *ClickOptions) e
 		return err
 	}
 
-	// Get screen dimensions for coordinate conversion
-	width, height, err := w.GetScreenSize()
+	// Convert to absolute coordinates (0-65535) relative to the VIRTUAL desktop
+	// so that clicks on secondary monitors (including negative coordinates) map
+	// correctly. Uses MOUSEEVENTF_VIRTUALDESK in performClick.
+	vx, vy, vw, vh, err := w.getVirtualScreenRect()
 	if err != nil {
-		return utils.WrapError(err, "failed to get screen size")
+		return utils.WrapError(err, "failed to get virtual screen size")
 	}
-
-	// Convert to absolute coordinates (0-65535 range)
-	absX := int32((x * 65535) / width)
-	absY := int32((y * 65535) / height)
+	absX := int32(((x - vx) * 65535) / (vw - 1))
+	absY := int32(((y - vy) * 65535) / (vh - 1))
 
 	// Get current cursor position to restore later
 	var currentPos POINT
@@ -131,7 +147,7 @@ func (w *WindowsMouseClicker) BackgroundClick(x, y int, options *ClickOptions) e
 
 	// Add random pre-delay if requested (simulates human hesitation)
 	if options.RandomDelay {
-		randomMs := 5 + (time.Now().UnixNano() % 10) // 5-14ms random
+		randomMs := 5 + rand.Intn(10) // 5-14ms random
 		time.Sleep(time.Duration(randomMs) * time.Millisecond)
 	}
 
@@ -148,7 +164,7 @@ func (w *WindowsMouseClicker) BackgroundClick(x, y int, options *ClickOptions) e
 
 	// Add random post-delay if requested
 	if options.RandomDelay {
-		randomMs := 3 + (time.Now().UnixNano() % 7) // 3-9ms random
+		randomMs := 3 + rand.Intn(7) // 3-9ms random
 		time.Sleep(time.Duration(randomMs) * time.Millisecond)
 	}
 
@@ -193,7 +209,7 @@ func (w *WindowsMouseClicker) performClick(absX, absY int32, button MouseButton)
 			Mi: MOUSEINPUT{
 				Dx:      absX,
 				Dy:      absY,
-				DwFlags: downFlag | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE,
+				DwFlags: downFlag | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK | MOUSEEVENTF_MOVE,
 			},
 		},
 		{
@@ -201,7 +217,7 @@ func (w *WindowsMouseClicker) performClick(absX, absY int32, button MouseButton)
 			Mi: MOUSEINPUT{
 				Dx:      absX,
 				Dy:      absY,
-				DwFlags: upFlag | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE,
+				DwFlags: upFlag | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK | MOUSEEVENTF_MOVE,
 			},
 		},
 	}
@@ -236,15 +252,42 @@ func (w *WindowsMouseClicker) GetScreenSize() (width, height int, err error) {
 	return width, height, nil
 }
 
-// IsValidCoordinate checks if the given coordinates are within screen bounds
+// getVirtualScreenRect returns the bounding rectangle (origin x/y, width, height)
+// of the virtual screen spanning all monitors. The origin may be negative when
+// a secondary monitor sits to the left of / above the primary one.
+func (w *WindowsMouseClicker) getVirtualScreenRect() (x, y, width, height int, err error) {
+	vx, _, _ := procGetSystemMetrics.Call(SM_XVIRTUALSCREEN)
+	vy, _, _ := procGetSystemMetrics.Call(SM_YVIRTUALSCREEN)
+	vw, _, _ := procGetSystemMetrics.Call(SM_CXVIRTUALSCREEN)
+	vh, _, _ := procGetSystemMetrics.Call(SM_CYVIRTUALSCREEN)
+
+	// GetSystemMetrics returns signed ints; SM_X/YVIRTUALSCREEN can be negative.
+	x = int(int32(vx))
+	y = int(int32(vy))
+	width = int(int32(vw))
+	height = int(int32(vh))
+
+	if width <= 1 || height <= 1 {
+		// Fall back to the primary display if virtual metrics are unavailable.
+		pw, ph, perr := w.GetScreenSize()
+		if perr != nil {
+			return 0, 0, 0, 0, fmt.Errorf("invalid virtual screen dimensions: %dx%d", width, height)
+		}
+		return 0, 0, pw, ph, nil
+	}
+	return x, y, width, height, nil
+}
+
+// IsValidCoordinate checks if the given coordinates are within the virtual
+// screen bounds (all monitors), so clicks on secondary displays are accepted.
 func (w *WindowsMouseClicker) IsValidCoordinate(x, y int) bool {
-	width, height, err := w.GetScreenSize()
+	vx, vy, vw, vh, err := w.getVirtualScreenRect()
 	if err != nil {
-		utils.Error("Failed to get screen size for coordinate validation: %v", err)
+		utils.Error("Failed to get virtual screen size for coordinate validation: %v", err)
 		return false
 	}
 
-	return x >= 0 && y >= 0 && x < width && y < height
+	return x >= vx && y >= vy && x < vx+vw && y < vy+vh
 }
 
 // PostMessageClick performs a true background click using SendMessage API
