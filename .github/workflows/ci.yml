@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # Cross-platform compile & format guard. Does NOT need OpenCV because it only
+  # touches the non-cgo packages (process/capture/mouse/utils). This is exactly
+  # the guard that catches "one platform stops compiling" regressions, e.g. an
+  # interface method missing from a *_darwin.go / *_windows.go file.
+  lint:
+    name: Lint & cross-compile (non-cgo pkgs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-formatted:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: Vet non-cgo packages for windows and darwin
+        run: |
+          for os in windows darwin; do
+            echo "== GOOS=$os =="
+            GOOS=$os go vet ./pkg/process/ ./pkg/capture/ ./pkg/mouse/ ./pkg/utils/
+          done
+
+  # macOS: full build + tests (OpenCV available via Homebrew, so the gocv-backed
+  # image package and the offline unit tests run for real).
+  test-macos:
+    name: Build & test (macOS, OpenCV)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install OpenCV
+        run: brew install opencv pkg-config
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test (offline/short)
+        run: go test ./tests/... -short -v
+
+  # Windows: verify the platform-specific syscall code compiles natively.
+  # OpenCV/gocv setup on Windows CI is heavy, so we build only the non-cgo
+  # packages here; the image package's cross-platform logic is already covered
+  # by the macOS job.
+  build-windows:
+    name: Build (Windows, non-cgo pkgs)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build non-cgo packages
+        run: go build ./pkg/process/ ./pkg/capture/ ./pkg/mouse/ ./pkg/utils/
