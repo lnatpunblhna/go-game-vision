@@ -56,7 +56,8 @@ A powerful cross-platform Go automation framework providing process management, 
 ### Prerequisites
 - **Go**: 1.23 or higher
 - **System**: Windows 10+ or macOS 10.14+
-- **OpenCV**: Required for image processing features
+- **OpenCV**: Required for image processing features, must be **4.x** (gocv wraps
+  the OpenCV 4 API and does not support 5.x)
 
 ### Quick Install
 
@@ -77,7 +78,13 @@ vcpkg install opencv4
 
 #### macOS
 ```bash
-brew install opencv
+# Note: Homebrew's main `opencv` formula has moved to 5.0.0, which gocv does not
+# support. Install opencv@4 instead. It is keg-only, so export its pkgconfig dir.
+brew install opencv@4 pkg-config
+export PKG_CONFIG_PATH="$(brew --prefix opencv@4)/lib/pkgconfig"
+
+# Verify (should print a 4.x version)
+pkg-config --modversion opencv4
 ```
 
 ---
