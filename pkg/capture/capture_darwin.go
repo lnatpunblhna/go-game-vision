@@ -3,98 +3,10 @@
 package capture
 
 /*
-	#cgo CFLAGS: -x objective-c
+	#cgo CFLAGS: -x objective-c -fobjc-arc
 	#cgo LDFLAGS: -framework CoreGraphics -framework Foundation -framework AppKit
-	#include <CoreGraphics/CoreGraphics.h>
-	#include <CoreFoundation/CoreFoundation.h>
-	#include <AppKit/AppKit.h>
 	#include <stdlib.h>
-	#include <stdbool.h>
-
-	// 根据PID获取窗口ID
-	long getWindowIDByPID(int pid) {
-		CFArrayRef windowList = CGWindowListCopyWindowInfo(
-			kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
-			kCGNullWindowID
-		);
-		CFIndex count = CFArrayGetCount(windowList);
-
-		for (CFIndex i = 0; i < count; i++) {
-			CFDictionaryRef dict = (CFDictionaryRef)CFArrayGetValueAtIndex(windowList, i);
-			CFNumberRef pidRef = (CFNumberRef)CFDictionaryGetValue(dict, kCGWindowOwnerPID);
-
-			if (pidRef) {
-				int windowPID;
-				CFNumberGetValue(pidRef, kCFNumberIntType, &windowPID);
-
-				if (windowPID == pid) {
-					CFNumberRef windowNumber = (CFNumberRef)CFDictionaryGetValue(dict, kCGWindowNumber);
-					if (windowNumber) {
-						long winID;
-						CFNumberGetValue(windowNumber, kCFNumberLongType, &winID);
-						CFRelease(windowList);
-						return winID;
-					}
-				}
-			}
-		}
-
-		CFRelease(windowList);
-		return -1;
-	}
-
-	// 根据窗口ID截取窗口内容 - 使用screencapture命令作为备用方案
-	bool captureWindowByID(long windowID, const char* outputPath) {
-		// 由于macOS 15中CGWindowListCreateImage被废弃，我们使用screencapture命令
-		// 这虽然不是纯粹的Core Graphics方案，但在所有macOS版本上都能工作
-		char command[512];
-		snprintf(command, sizeof(command), "screencapture -l%ld -x '%s'", windowID, outputPath);
-
-		int result = system(command);
-		return result == 0;
-	}
-
-	// 获取窗口信息
-	bool getWindowInfo(long windowID, int* width, int* height, int* x, int* y) {
-		CGWindowID winID = (CGWindowID)windowID;
-
-		CFArrayRef windowList = CGWindowListCopyWindowInfo(kCGWindowListOptionIncludingWindow, winID);
-		if (!windowList || CFArrayGetCount(windowList) == 0) {
-			if (windowList) CFRelease(windowList);
-			return false;
-		}
-
-		CFDictionaryRef windowDict = (CFDictionaryRef)CFArrayGetValueAtIndex(windowList, 0);
-		CFDictionaryRef boundsDict = (CFDictionaryRef)CFDictionaryGetValue(windowDict, kCGWindowBounds);
-
-		if (boundsDict) {
-			CFNumberRef xRef = (CFNumberRef)CFDictionaryGetValue(boundsDict, CFSTR("X"));
-			CFNumberRef yRef = (CFNumberRef)CFDictionaryGetValue(boundsDict, CFSTR("Y"));
-			CFNumberRef widthRef = (CFNumberRef)CFDictionaryGetValue(boundsDict, CFSTR("Width"));
-			CFNumberRef heightRef = (CFNumberRef)CFDictionaryGetValue(boundsDict, CFSTR("Height"));
-
-			if (xRef && yRef && widthRef && heightRef) {
-				CFNumberGetValue(xRef, kCFNumberIntType, x);
-				CFNumberGetValue(yRef, kCFNumberIntType, y);
-				CFNumberGetValue(widthRef, kCFNumberIntType, width);
-				CFNumberGetValue(heightRef, kCFNumberIntType, height);
-				CFRelease(windowList);
-				return true;
-			}
-		}
-
-		CFRelease(windowList);
-		return false;
-	}
-
-	// 检查窗口是否存在并可见
-	bool isWindowValid(long windowID) {
-		CGWindowID winID = (CGWindowID)windowID;
-		CFArrayRef windowList = CGWindowListCopyWindowInfo(kCGWindowListOptionIncludingWindow, winID);
-		bool isValid = (windowList != NULL && CFArrayGetCount(windowList) > 0);
-		if (windowList) CFRelease(windowList);
-		return isValid;
-	}
+	#include "window_query.h"
 */
 import "C"
 import (
@@ -119,8 +31,22 @@ func newPlatformCapture() ScreenCapture {
 
 // CaptureWindowByPID Capture window based on process ID
 func (d *DarwinCapture) CaptureWindowByPID(pid uint32, options *CaptureOptions) (image.Image, error) {
-	// 首先根据PID获取窗口ID
-	windowID := C.getWindowIDByPID(C.int(pid))
+	var windowID C.long
+
+	// A title narrows the choice when the process owns several windows; without it
+	// the pick falls to whatever CGWindowList happens to enumerate first, which is
+	// not stable across launches.
+	if options != nil && options.WindowTitle != "" {
+		win, err := FindWindow(&WindowQuery{PID: pid, TitleContains: options.WindowTitle})
+		if err != nil {
+			return nil, utils.WrapError(err, fmt.Sprintf(
+				"no window of PID %d has a title containing %q", pid, options.WindowTitle))
+		}
+		windowID = C.long(win.Handle)
+	} else {
+		windowID = C.getWindowIDByPID(C.int(pid))
+	}
+
 	if windowID == -1 {
 		return nil, utils.WrapError(utils.ErrWindowNotFound, fmt.Sprintf("无法找到PID %d对应的窗口", pid))
 	}
@@ -132,9 +58,32 @@ func (d *DarwinCapture) CaptureWindowByPID(pid uint32, options *CaptureOptions) 
 		return nil, utils.WrapError(utils.ErrWindowNotFound, fmt.Sprintf("窗口ID %d无效或已关闭", windowID))
 	}
 
+	scale := float64(C.getWindowScaleFactor(C.long(windowID)))
+
+	// 优先走 ScreenCaptureKit：直接拿到内存位图，无子进程、无 PNG 编解码、无磁盘 IO。
+	// 下面的 screencapture 路径每帧要几百毫秒，只能作为兜底（SCK 不可用、
+	// 或屏幕录制权限尚未授予时）。
+	if img, err := captureWindowSCK(uintptr(windowID), scale); err == nil {
+		utils.Debug("SCK 截取窗口 PID %d 成功: %dx%d px (scale=%.2f)",
+			pid, img.Bounds().Dx(), img.Bounds().Dy(), scale)
+		return img, nil
+	} else {
+		utils.Warn("ScreenCaptureKit 截图失败，回退 screencapture: %v", err)
+	}
+
+	return d.captureWindowViaSubprocess(pid, windowID)
+}
+
+// captureWindowViaSubprocess is the legacy `screencapture -l<id>` fallback.
+//
+// Retained only for the cases ScreenCaptureKit cannot serve (macOS < 14, or a
+// window SCK refuses to enumerate). It forks a process, encodes a PNG, writes it
+// to /tmp and decodes it back — far too slow for an automation loop, but better
+// than failing outright.
+func (d *DarwinCapture) captureWindowViaSubprocess(pid uint32, windowID C.long) (image.Image, error) {
 	// 获取窗口信息
 	var width, height, x, y C.int
-	if !bool(C.getWindowInfo(C.long(windowID), &width, &height, &x, &y)) {
+	if !bool(C.getWindowInfo(windowID, &width, &height, &x, &y)) {
 		utils.Warn("无法获取窗口信息，使用默认方法截图")
 	} else {
 		utils.Debug("窗口信息: 位置(%d, %d), 尺寸(%d x %d)", x, y, width, height)
@@ -223,6 +172,10 @@ func (d *DarwinCapture) GetWindowInfoByPID(pid uint32) (*WindowInfo, error) {
 		return nil, utils.WrapError(utils.ErrCaptureFailure, "无法获取窗口详细信息")
 	}
 
+	// 求出该窗口所在屏幕的缩放系数。Rect 是逻辑点,截图是物理像素,
+	// 少了这一步,Retina 上的点击坐标会成倍偏移。
+	scale := float64(C.getWindowScaleFactor(C.long(windowID)))
+
 	// 构建窗口信息结构
 	windowInfo := &WindowInfo{
 		Handle: uintptr(windowID),
@@ -231,11 +184,12 @@ func (d *DarwinCapture) GetWindowInfoByPID(pid uint32) (*WindowInfo, error) {
 			Min: image.Point{X: int(x), Y: int(y)},
 			Max: image.Point{X: int(x + width), Y: int(y + height)},
 		},
-		IsHidden: false, // 通过CGWindowListCopyWindowInfo查到的窗口通常是可见的
+		IsHidden:    false, // 通过CGWindowListCopyWindowInfo查到的窗口通常是可见的
+		ScaleFactor: scale,
 	}
 
-	utils.Debug("获取到窗口信息: ID=%d, 位置(%d, %d), 尺寸(%d x %d)",
-		windowID, x, y, width, height)
+	utils.Debug("获取到窗口信息: ID=%d, 位置(%d, %d), 尺寸(%d x %d), 缩放=%.2f",
+		windowID, x, y, width, height, scale)
 
 	return windowInfo, nil
 }

@@ -7,10 +7,14 @@ import (
 
 // Define error types
 var (
-	ErrProcessNotFound      = fmt.Errorf("process not found")
-	ErrWindowNotFound       = fmt.Errorf("window not found")
-	ErrCaptureFailure       = fmt.Errorf("capture failed")
-	ErrImageProcessing      = fmt.Errorf("image processing failed")
+	ErrProcessNotFound = fmt.Errorf("process not found")
+	ErrWindowNotFound  = fmt.Errorf("window not found")
+	ErrCaptureFailure  = fmt.Errorf("capture failed")
+	ErrImageProcessing = fmt.Errorf("image processing failed")
+	// ErrInvalidImage means an image or frame was missing, empty, or
+	// malformed — distinct from ErrImageProcessing, which means a well-formed
+	// image failed to process.
+	ErrInvalidImage         = fmt.Errorf("invalid image")
 	ErrInvalidParameter     = fmt.Errorf("invalid parameter")
 	ErrPlatformNotSupported = fmt.Errorf("platform not supported")
 )

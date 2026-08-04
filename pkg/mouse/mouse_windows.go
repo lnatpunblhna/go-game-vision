@@ -4,6 +4,7 @@ package mouse
 
 import (
 	"fmt"
+	"image"
 	"math/rand"
 	"time"
 	"unsafe"
@@ -26,17 +27,14 @@ var (
 	procGetWindowRect       = user32.NewProc("GetWindowRect")
 	procGetForegroundWindow = user32.NewProc("GetForegroundWindow")
 	procSetForegroundWindow = user32.NewProc("SetForegroundWindow")
-	procSetProcessDPIAware  = user32.NewProc("SetProcessDPIAware")
 )
 
-// init makes the process DPI-aware so that GetSystemMetrics / cursor / click
-// coordinates are reported in real (physical) pixels instead of being scaled by
-// the system DPI. Without this, on a 150% display the reported screen size and
-// click coordinates are off by the scale factor. Best-effort: ignored if the
-// call fails or the process is already DPI-aware.
-func init() {
-	procSetProcessDPIAware.Call()
-}
+// DPI awareness used to be opted into by an init() here. It now lives in
+// pkg/platform, which pkg/capture depends on too — a program that imported only
+// pkg/capture used to miss this call entirely and read back DPI-virtualised
+// window rectangles. pkg/platform also upgrades the request from the legacy
+// system-DPI-aware call to per-monitor-v2, which is the only mode that is
+// correct on mixed-scale multi-monitor setups.
 
 // Windows mouse input constants
 const (
@@ -426,5 +424,138 @@ func (w *WindowsMouseClicker) postMessageClickInternal(hwnd uintptr, x, y int, o
 	procSendMessage.Call(hwnd, uintptr(upMsg), 0, lParam)
 
 	utils.Info("Click sent to hwnd=0x%X at client coords (%d, %d)", hwnd, x, y)
+	return nil
+}
+
+// getPlatformCursorPosition reads the current cursor location in physical pixels,
+// the same coordinate space BackgroundClick accepts once the process is
+// per-monitor DPI aware (see pkg/platform).
+func getPlatformCursorPosition() (int, int, error) {
+	var pos POINT
+	ret, _, err := procGetCursorPos.Call(uintptr(unsafe.Pointer(&pos)))
+	if ret == 0 {
+		return 0, 0, utils.WrapError(err, "GetCursorPos failed")
+	}
+	return int(pos.X), int(pos.Y), nil
+}
+
+// Mouse wheel constants.
+const (
+	MOUSEEVENTF_WHEEL  = 0x0800 // Vertical wheel movement
+	MOUSEEVENTF_HWHEEL = 0x1000 // Horizontal wheel movement
+	WHEEL_DELTA        = 120    // One notch of wheel rotation
+)
+
+// sendMouseEvent posts a single mouse event via SendInput.
+//
+// Absolute coordinates are expressed against the virtual desktop
+// (MOUSEEVENTF_VIRTUALDESK) so that points on secondary monitors — which can have
+// negative coordinates — map correctly rather than being clamped to the primary
+// display.
+func sendMouseEvent(x, y int, flags uint32, mouseData uint32) error {
+	vx, vy, vw, vh, err := (&WindowsMouseClicker{}).getVirtualScreenRect()
+	if err != nil {
+		return utils.WrapError(err, "failed to get virtual screen size")
+	}
+
+	input := INPUT{
+		Type: INPUT_MOUSE,
+		Mi: MOUSEINPUT{
+			Dx:        int32(((x - vx) * 65535) / (vw - 1)),
+			Dy:        int32(((y - vy) * 65535) / (vh - 1)),
+			MouseData: mouseData,
+			DwFlags:   flags | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+		},
+	}
+
+	ret, _, callErr := procSendInput.Call(1, uintptr(unsafe.Pointer(&input)), unsafe.Sizeof(input))
+	if ret != 1 {
+		return utils.WrapError(callErr, "SendInput failed")
+	}
+	return nil
+}
+
+// dragPlatform performs a drag using SendInput.
+func dragPlatform(from, to image.Point, opts *DragOptions) error {
+	var downFlag, upFlag uint32
+	switch opts.button() {
+	case LeftButton:
+		downFlag, upFlag = MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP
+	case RightButton:
+		downFlag, upFlag = MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP
+	case MiddleButton:
+		downFlag, upFlag = MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP
+	default:
+		return fmt.Errorf("unsupported mouse button: %v", opts.button())
+	}
+
+	// Move to the start before pressing: pressing at a position the cursor has not
+	// reached yet is how drags end up starting from wherever the cursor last was.
+	if err := sendMouseEvent(from.X, from.Y, MOUSEEVENTF_MOVE, 0); err != nil {
+		return err
+	}
+	if err := sendMouseEvent(from.X, from.Y, downFlag, 0); err != nil {
+		return err
+	}
+
+	// Release the button even if the motion fails, so a failure cannot leave the
+	// button stuck down system-wide.
+	released := false
+	release := func() error {
+		if released {
+			return nil
+		}
+		released = true
+		return sendMouseEvent(to.X, to.Y, upFlag, 0)
+	}
+	defer func() {
+		if err := release(); err != nil {
+			utils.Warn("failed to release the drag button: %v", err)
+		}
+	}()
+
+	time.Sleep(time.Duration(opts.holdMS()) * time.Millisecond)
+
+	steps := opts.steps()
+	for i := 1; i <= steps; i++ {
+		p := interpolate(from, to, float64(i)/float64(steps))
+		if err := sendMouseEvent(p.X, p.Y, MOUSEEVENTF_MOVE, 0); err != nil {
+			return err
+		}
+		time.Sleep(time.Duration(opts.stepDelayMS()) * time.Millisecond)
+	}
+
+	time.Sleep(time.Duration(opts.holdMS()) * time.Millisecond)
+	return release()
+}
+
+// scrollPlatform scrolls using SendInput wheel events.
+func scrollPlatform(x, y int, amount int, opts *ScrollOptions) error {
+	flag := uint32(MOUSEEVENTF_WHEEL)
+	if opts.horizontal() {
+		flag = MOUSEEVENTF_HWHEEL
+	}
+
+	// Position the cursor first: wheel events are delivered to whatever is under
+	// the pointer.
+	if err := sendMouseEvent(x, y, MOUSEEVENTF_MOVE, 0); err != nil {
+		return err
+	}
+
+	steps := amount
+	direction := 1
+	if steps < 0 {
+		steps, direction = -steps, -1
+	}
+
+	// One notch per event rather than one event carrying N notches: large single
+	// deltas are often coalesced into less scrolling than asked for.
+	delta := int32(direction * WHEEL_DELTA)
+	for i := 0; i < steps; i++ {
+		if err := sendMouseEvent(x, y, flag, uint32(delta)); err != nil {
+			return err
+		}
+		time.Sleep(time.Duration(opts.stepDelayMS()) * time.Millisecond)
+	}
 	return nil
 }

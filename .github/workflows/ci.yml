@@ -8,15 +8,20 @@ on:
 
 jobs:
   # Cross-platform compile & format guard. Does NOT need OpenCV because it only
-  # touches the non-gocv packages (process/capture/mouse/utils). This is exactly
-  # the guard that catches "one platform stops compiling" regressions, e.g. an
-  # interface method missing from a *_darwin.go / *_windows.go file.
+  # touches the non-gocv packages. This is exactly the guard that catches "one
+  # platform stops compiling" regressions, e.g. an interface method missing from a
+  # *_darwin.go / *_windows.go file.
   #
-  # Scope note: capture/mouse are cgo-backed on darwin (Objective-C), and cross
-  # compiling from Linux runs with CGO_ENABLED=0, which drops every `import "C"`
-  # file from the build -- newPlatformCapture/newPlatformMouseClicker would then
-  # look undefined. Those two packages are therefore vetted for darwin in the
-  # macOS job (`go vet ./...`), not here.
+  # Scope note 1 (cgo): capture/mouse/keyboard are cgo-backed on darwin
+  # (Objective-C), and cross compiling from Linux runs with CGO_ENABLED=0, which
+  # drops every `import "C"` file from the build -- newPlatformCapture /
+  # newPlatformMouseClicker / newPlatformKeyboard would then look undefined. Those
+  # packages are therefore vetted for darwin in the macOS job (`go vet ./...`),
+  # not here.
+  #
+  # Scope note 2 (gocv): pkg/image and pkg/automation depend on gocv, which needs
+  # cgo plus a platform-native OpenCV. They cannot be cross-compiled at all and are
+  # covered only by the macOS job. Do not add them to the steps below.
   lint:
     name: Lint & cross-compile (non-cgo pkgs)
     runs-on: ubuntu-latest
@@ -34,10 +39,13 @@ jobs:
           fi
 
       - name: Vet for windows (all non-gocv packages)
-        run: GOOS=windows go vet ./pkg/process/ ./pkg/capture/ ./pkg/mouse/ ./pkg/utils/
+        run: >
+          GOOS=windows go vet
+          ./pkg/process/ ./pkg/capture/ ./pkg/mouse/ ./pkg/utils/
+          ./pkg/platform/ ./pkg/keyboard/ ./pkg/safety/
 
       - name: Vet for darwin (pure-Go packages only)
-        run: GOOS=darwin go vet ./pkg/process/ ./pkg/utils/
+        run: GOOS=darwin go vet ./pkg/process/ ./pkg/utils/ ./pkg/platform/
 
   # macOS: full build + tests (OpenCV available via Homebrew, so the gocv-backed
   # image package and the offline unit tests run for real).
@@ -86,4 +94,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Build non-cgo packages
-        run: go build ./pkg/process/ ./pkg/capture/ ./pkg/mouse/ ./pkg/utils/
+        run: >
+          go build
+          ./pkg/process/ ./pkg/capture/ ./pkg/mouse/ ./pkg/utils/
+          ./pkg/platform/ ./pkg/keyboard/ ./pkg/safety/

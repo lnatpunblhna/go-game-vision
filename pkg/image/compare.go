@@ -657,28 +657,44 @@ func imageToMat(img image.Image) (gocv.Mat, error) {
 	return mat, nil
 }
 
-// ToScreenCoordinates converts window-relative coordinates to screen coordinates
+// ToScreenCoordinates converts a match location into absolute screen (click)
+// coordinates.
+//
+// m.Location is in captured-image PIXELS, while windowInfo.Rect is in the
+// platform's click coordinate space; on a Retina display those differ by
+// windowInfo.ScaleFactor. Dividing by the scale factor is what keeps clicks on
+// target — without it every click drifts by (scale-1)x the offset from the
+// window origin. See capture.WindowInfo for the full contract.
 func (m *MatchResult) ToScreenCoordinates(windowInfo *capture.WindowInfo) image.Point {
+	return windowInfo.PixelToClickPoint(m.Location.X, m.Location.Y)
+}
+
+// ToScreenBoundingBox converts the matched region into absolute screen (click)
+// coordinates, applying the same pixel-to-point scaling as ToScreenCoordinates.
+func (m *MatchResult) ToScreenBoundingBox(windowInfo *capture.WindowInfo) image.Rectangle {
+	min := windowInfo.PixelToClickPoint(m.BoundingBox.Min.X, m.BoundingBox.Min.Y)
+	max := windowInfo.PixelToClickPoint(m.BoundingBox.Max.X, m.BoundingBox.Max.Y)
+	return image.Rectangle{Min: min, Max: max}
+}
+
+// CenterInPixels returns the centre of the matched region in captured-image
+// pixels. Clicking the centre of a match is almost always more robust than
+// clicking its top-left corner, which may land on a transparent edge.
+func (m *MatchResult) CenterInPixels() image.Point {
+	if m.BoundingBox.Empty() {
+		return m.Location
+	}
 	return image.Point{
-		X: windowInfo.Rect.Min.X + m.Location.X,
-		Y: windowInfo.Rect.Min.Y + m.Location.Y,
+		X: (m.BoundingBox.Min.X + m.BoundingBox.Max.X) / 2,
+		Y: (m.BoundingBox.Min.Y + m.BoundingBox.Max.Y) / 2,
 	}
 }
 
-// ToScreenBoundingBox converts window-relative bounding box to screen coordinates
-func (m *MatchResult) ToScreenBoundingBox(windowInfo *capture.WindowInfo) image.Rectangle {
-	offsetX := windowInfo.Rect.Min.X
-	offsetY := windowInfo.Rect.Min.Y
-	return image.Rectangle{
-		Min: image.Point{
-			X: m.BoundingBox.Min.X + offsetX,
-			Y: m.BoundingBox.Min.Y + offsetY,
-		},
-		Max: image.Point{
-			X: m.BoundingBox.Max.X + offsetX,
-			Y: m.BoundingBox.Max.Y + offsetY,
-		},
-	}
+// ToScreenCenter converts the centre of the matched region into absolute screen
+// (click) coordinates.
+func (m *MatchResult) ToScreenCenter(windowInfo *capture.WindowInfo) image.Point {
+	c := m.CenterInPixels()
+	return windowInfo.PixelToClickPoint(c.X, c.Y)
 }
 
 // ClickAtMatch performs a mouse click at the matched location

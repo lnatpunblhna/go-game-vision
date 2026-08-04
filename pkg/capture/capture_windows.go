@@ -85,6 +85,18 @@ func newPlatformCapture() ScreenCapture {
 
 // CaptureWindowByPID captures window by process ID
 func (w *WindowsCapture) CaptureWindowByPID(pid uint32, options *CaptureOptions) (image.Image, error) {
+	// A title narrows the choice when the process owns several windows — a
+	// launcher plus the game, or a main window plus helper panels — where
+	// otherwise the pick falls to whichever window EnumWindows yields first.
+	if options != nil && options.WindowTitle != "" {
+		win, err := FindWindow(&WindowQuery{PID: pid, TitleContains: options.WindowTitle})
+		if err != nil {
+			return nil, utils.WrapError(err, fmt.Sprintf(
+				"no window of PID %d has a title containing %q", pid, options.WindowTitle))
+		}
+		return w.CaptureWindowByHandle(win.Handle, options)
+	}
+
 	windowsByPID, err := w.GetWindowsByPID(pid)
 	if err != nil {
 		return nil, utils.WrapError(err, "failed to get windowsByPID")
@@ -267,6 +279,10 @@ func (w *WindowsCapture) GetWindowsByPID(pid uint32) ([]WindowInfo, error) {
 				Title:  title,
 				PID:    pid,
 				Rect:   rect,
+				// The process is made per-monitor DPI aware by pkg/platform, so
+				// GetWindowRect, the BitBlt/PrintWindow capture and SendInput all
+				// agree on physical pixels — no pixel-to-point conversion needed.
+				ScaleFactor: 1.0,
 			})
 		}
 		return 1 // 继续枚举

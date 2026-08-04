@@ -39,7 +39,10 @@ func TestNikkeImageMatchAndClick(t *testing.T) {
 	pm := process.NewProcessManager()
 	procs, err := pm.GetProcessByName(processName, process.ExactMatch)
 	if err != nil || len(procs) == 0 {
-		t.Fatalf("未找到运行中的 %s 进程,请先启动游戏", processName)
+		// Skip, not fail: the game not running is an unmet precondition rather
+		// than a defect, and failing here makes `go test ./tests/...` red on every
+		// machine that does not happen to have this one game open.
+		t.Skipf("未找到运行中的 %s 进程,跳过(需要先启动游戏)", processName)
 	}
 
 	pid := procs[0].PID
