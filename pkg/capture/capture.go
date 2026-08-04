@@ -3,6 +3,7 @@ package capture
 import (
 	"image"
 
+	"github.com/lnatpunblhna/go-game-vision/pkg/platform"
 	"github.com/lnatpunblhna/go-game-vision/pkg/utils"
 )
 
@@ -37,7 +38,19 @@ type CaptureOptions struct {
 	Format        ImageFormat // Image format
 	Quality       int         // JPEG quality (1-100)
 	IncludeHidden bool        // Whether to include hidden window content
-	WindowTitle   string      // Window title to capture (optional)
+
+	// WindowTitle selects among a process's windows by title substring
+	// (case-insensitive). Empty means "use the process's main window".
+	//
+	// Set this when a process owns several windows — a launcher plus the game, or
+	// a main window plus helper panels — because otherwise the choice falls to
+	// whichever window the OS enumerates first, which is not stable.
+	//
+	// This narrows within one PID. When the process name itself is unhelpful —
+	// most notably a Wine or CrossOver game, where the process is
+	// `wine64-preloader` and the game's name appears only in the window title —
+	// use FindWindowByTitle instead, which does not need a PID at all.
+	WindowTitle string
 }
 
 // DefaultCaptureOptions default screenshot options
@@ -49,13 +62,54 @@ func DefaultCaptureOptions() *CaptureOptions {
 	}
 }
 
-// WindowInfo window information
+// WindowInfo window information.
+//
+// Coordinate space contract — read this before doing any arithmetic with the
+// fields, because Rect and captured images do NOT necessarily share a scale:
+//
+//   - Rect is in the platform's *click* coordinate space: the space that
+//     mouse.BackgroundClick expects. On macOS that is logical points (what
+//     CGEventPost consumes); on Windows it is physical pixels (the process is
+//     made per-monitor DPI aware, see pkg/platform).
+//   - Images returned by CaptureWindowByPID are in *physical pixels*.
+//   - ScaleFactor is the ratio between the two: capturedPixels / Rect size.
+//     On a Retina Mac this is 2.0; on Windows it is 1.0.
+//
+// So a template match found at pixel (px, py) inside a captured image maps to
+// the click point Rect.Min + (px, py)/ScaleFactor. Use ScaleOrDefault rather
+// than reading ScaleFactor directly, so a zero value degrades to 1.0 instead
+// of dividing by zero.
 type WindowInfo struct {
-	Handle   uintptr         // Window handle (Windows) or Window ID (macOS)
-	Title    string          // Window title
-	PID      uint32          // Process ID
-	Rect     image.Rectangle // Window position and size
-	IsHidden bool            // Whether window is hidden/minimized
+	Handle      uintptr         // Window handle (Windows) or Window ID (macOS)
+	Title       string          // Window title
+	PID         uint32          // Process ID
+	Rect        image.Rectangle // Window position and size, in click coordinates
+	IsHidden    bool            // Whether window is hidden/minimized
+	ScaleFactor float64         // capturedPixels / Rect size (2.0 on Retina, 1.0 on Windows)
+}
+
+// ScaleOrDefault returns the window's scale factor, falling back to 1.0 when it
+// is unset or nonsensical. Always prefer this over reading ScaleFactor directly:
+// a WindowInfo built by hand (or by an older platform backend) leaves the field
+// at 0, and dividing by that would send clicks to infinity.
+func (w *WindowInfo) ScaleOrDefault() float64 {
+	if w == nil || w.ScaleFactor <= 0 {
+		return 1.0
+	}
+	return w.ScaleFactor
+}
+
+// PixelToClickPoint converts a point expressed in captured-image pixels
+// (relative to the window's top-left) into absolute click coordinates.
+func (w *WindowInfo) PixelToClickPoint(px, py int) image.Point {
+	if w == nil {
+		return image.Point{X: px, Y: py}
+	}
+	scale := w.ScaleOrDefault()
+	return image.Point{
+		X: w.Rect.Min.X + int(float64(px)/scale+0.5),
+		Y: w.Rect.Min.Y + int(float64(py)/scale+0.5),
+	}
 }
 
 // ScreenCapture screen capture interface
@@ -70,8 +124,14 @@ type ScreenCapture interface {
 	GetWindowInfoByPID(pid uint32) (*WindowInfo, error)
 }
 
-// NewScreenCapture creates screen capture instance
+// NewScreenCapture creates screen capture instance.
+//
+// Ensures the process is DPI aware first: on Windows, GetWindowRect only
+// reports true physical pixels once that opt-in has happened, and without it
+// the window rectangles this package hands back would disagree with the
+// captured images they are supposed to describe.
 func NewScreenCapture() ScreenCapture {
+	platform.EnsureDPIAware()
 	return newPlatformCapture()
 }
 

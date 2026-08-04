@@ -3,6 +3,7 @@ package mouse
 import (
 	"fmt"
 
+	"github.com/lnatpunblhna/go-game-vision/pkg/platform"
 	"github.com/lnatpunblhna/go-game-vision/pkg/utils"
 )
 
@@ -67,8 +68,13 @@ func DefaultClickOptions() *ClickOptions {
 	}
 }
 
-// NewMouseClicker creates a new platform-specific mouse clicker
+// NewMouseClicker creates a new platform-specific mouse clicker.
+//
+// Ensures the process is DPI aware first: on Windows, click coordinates and
+// GetSystemMetrics are only reported in true physical pixels once that opt-in
+// has happened, and it must happen before the first such call to take effect.
 func NewMouseClicker() MouseClicker {
+	platform.EnsureDPIAware()
 	return newPlatformMouseClicker()
 }
 
@@ -111,4 +117,14 @@ func ValidateCoordinates(x, y int) error {
 			x, y, width-1, height-1)
 	}
 	return nil
+}
+
+// GetCursorPosition returns the current cursor location in the same coordinate
+// space BackgroundClick accepts.
+//
+// Provided as a free function rather than a MouseClicker method so that adding it
+// does not break external implementations of that interface.
+func GetCursorPosition() (x, y int, err error) {
+	platform.EnsureDPIAware()
+	return getPlatformCursorPosition()
 }

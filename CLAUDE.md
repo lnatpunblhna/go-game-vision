@@ -30,12 +30,49 @@ go build .
 The project follows a clean architecture pattern with platform-specific implementations:
 
 ### Core Packages Structure
+
+Perception and input (low level):
+- `pkg/platform/` - Process-wide OS setup that must precede any window/input call.
+  Currently per-monitor-v2 DPI awareness on Windows. Both `capture` and `mouse`
+  depend on it; it exists as its own leaf package because the DPI opt-in is
+  process-wide and one-shot, and living in `mouse`'s init meant a program
+  importing only `capture` silently read DPI-virtualised window rectangles.
 - `pkg/process/` - Process management with exact/fuzzy matching
-- `pkg/capture/` - Screen capture functionality using platform APIs
-- `pkg/image/` - Image comparison using GoCV and OpenCV
-- `pkg/mouse/` - Mouse simulation with background clicking
+- `pkg/capture/` - Window capture. Stateless `ScreenCapture` for one-off shots,
+  plus `FrameCapturer` (a session that reuses its pixel buffer) for loops, and
+  `FindWindows`/`FindWindowByTitle` for title-first lookup.
+- `pkg/image/` - Template matching (`Matcher` + `Template` = the hot path) and
+  HSV colour detection (`ColorDetector`), both via GoCV/OpenCV
+- `pkg/mouse/` - Clicks, drag, scroll
+- `pkg/keyboard/` - Synthetic keyboard input, positional key codes
 - `pkg/utils/` - Error handling and logging utilities
+
+Decision and safety (high level):
+- `pkg/safety/` - The emergency stop. Not optional for anything that moves the
+  real cursor: macOS has no true background click, so a running script owns the
+  mouse and the user cannot reach a stop button.
+- `pkg/automation/` - `Session` (capture+match+input+templates wired together,
+  with `WaitFor`/`WaitVanish`/`WaitStable`) and `Machine` (the
+  recognise → decide → act loop over declared states, with unknown-screen and
+  stuck-state fallbacks)
+
 - `tests/` - Test files for all packages
+
+### The coordinate-space contract (read before touching click math)
+
+Captured images are in **physical pixels**; `WindowInfo.Rect` and the coordinates
+`mouse.BackgroundClick` accepts are in the platform's **click space** (logical
+points on macOS, physical pixels on Windows). `WindowInfo.ScaleFactor` is the
+ratio, so a match at pixel `(px,py)` maps to `Rect.Min + (px,py)/ScaleFactor`.
+
+Use `WindowInfo.PixelToClickPoint` or `MatchResult.ToScreenCenter`; never add a
+pixel offset straight onto `Rect.Min`. Doing so was a real bug: on a 2880x1864
+Retina display a match at the centre of a 1073pt-wide window resolved to
+(1435,1122) instead of (830,573). `tests/scale_coords_test.go` pins this.
+
+Related trap: `screencapture -l<id>` includes the window's drop shadow unless
+`-o` is passed, inflating the frame by ~34pt per side so that the image origin no
+longer coincides with the window origin (measured 2.127x instead of 2.0x).
 
 ### Platform-Specific Implementation Pattern
 Each major package uses build tags for platform-specific code:
@@ -59,13 +96,34 @@ vet: pkg/mouse/mouse.go:72:9: undefined: newPlatformMouseClicker
 ```
 
 Consequences to respect:
-- Only `pkg/process/` and `pkg/utils/` can be vetted/built for darwin from a
-  non-macOS host. `pkg/capture/` and `pkg/mouse/` require a real macOS toolchain
-  (macOS SDK + frameworks), so CI vets them in the macOS job via `go vet ./...`.
-- Do not "helpfully" add `capture`/`mouse` back into the Linux cross-compile step
-  in `.github/workflows/ci.yml` — that is precisely what breaks the lint job.
+- Only `pkg/process/`, `pkg/utils/` and `pkg/platform/` can be vetted/built for
+  darwin from a non-macOS host. `pkg/capture/`, `pkg/mouse/` and `pkg/keyboard/`
+  require a real macOS toolchain (macOS SDK + frameworks), so CI vets them in the
+  macOS job via `go vet ./...`.
+- Do not "helpfully" add `capture`/`mouse`/`keyboard` back into the Linux
+  cross-compile step in `.github/workflows/ci.yml` — that is precisely what
+  breaks the lint job.
 - Windows implementations are pure `syscall`/`golang.org/x/sys` with no cgo, so
-  all four non-gocv packages do cross-compile for `GOOS=windows` from any host.
+  every non-gocv package cross-compiles for `GOOS=windows` from any host —
+  including `pkg/safety`, which only depends on `mouse` and `utils`.
+- **`pkg/image/` and `pkg/automation/` cannot be cross-compiled at all**, because
+  gocv needs cgo plus a platform-native OpenCV. They are covered only by the
+  macOS job. Adding them to a `GOOS=windows` step fails in `runtime/cgo` with
+  `'windows.h' file not found`.
+
+### Build constraints in .m files are load-bearing
+
+`pkg/capture/sck_capture.m` and `pkg/capture/window_query.m` each start with
+`//go:build darwin`. Build constraints in `.m` files *are* honoured by the go
+tool, and without them a `GOOS=windows` build of `pkg/capture` fails outright:
+
+```
+package .../pkg/capture: Objective-C source files not allowed when not using cgo or SWIG: sck_capture.m
+```
+
+The Windows build excludes every cgo `.go` file, so the package stops being a cgo
+package while the `.m` file is still sitting in the directory. Do not remove those
+constraints.
 
 ### Key Interfaces
 - `ProcessManager` - Process discovery and management interface
@@ -93,11 +151,49 @@ Consequences to respect:
 - Can capture occluded windows
 - Mouse simulation uses Windows API for background clicks
 
-### macOS  
-- Requires Screen Recording permissions
-- Uses screencapture command for screen capture
-- Mouse simulation uses Core Graphics for background clicks
+### macOS
+- Requires Screen Recording permission. Without it, ScreenCaptureKit returns no
+  windows and `kCGWindowName` comes back empty, so titles cannot be matched.
+  Keyboard/mouse injection additionally needs Accessibility permission.
+- Capture uses **ScreenCaptureKit** (`SCScreenshotManager`, macOS 14+), which
+  returns an in-memory CGImage. The old `screencapture` subprocess remains only as
+  a fallback in `captureWindowViaSubprocess`: it forks a process, encodes a PNG and
+  does disk IO, measuring 130-190ms/frame (5-7 fps) against ~50ms (20 fps) for SCK.
+  `FrameCapturer` is SCK-only by design — falling back to a 150ms/frame path in a
+  loop would be worse than failing.
+- **There is no true background click.** `CGEventPost` drives the real system
+  cursor, so a running script owns the mouse; `PostMessageClick` and
+  `PostKeyToWindow` are deliberately unimplemented (Win32-only concepts). Design
+  automation for the foreground-exclusive model and always arm `pkg/safety`.
+- **Target windows by title, not by process name.** Many Mac games are Windows
+  builds under Wine/CrossOver/Whisky, where `ps` shows `wine64-preloader` and the
+  game's name appears only in the window title; Steam-distributed games often have
+  a launcher parent that matches the name while the window belongs to a child. Use
+  `capture.FindWindowByTitle` / `automation.NewSessionByTitle`.
 - Process management uses ps command for reliable cross-platform compatibility
+
+### Performance notes (measured on this project)
+
+ROI is the single biggest lever, and multi-scale is the biggest waste:
+
+| operation (1920x1050 frame) | time | fps |
+|---|---|---|
+| old API (`CaptureWindowByPID` + `MultiScaleTemplateMatch`) | 1.31s | 0.8 |
+| hot path, full-frame match | 158ms | 6.3 |
+| hot path + 300x200 ROI | 39ms | 25.7 |
+| match only, full frame | 120ms | 8.4 |
+| match only, 300x200 ROI | 2.0ms | 496 |
+| match only, 11 scales | 925ms | 1.1 |
+
+So: always set `MatchOptions.ROI`, and leave `MatchOptions.Scales` empty unless the
+target genuinely changes size — a game window's resolution is fixed, so scanning
+scales costs one full match per entry for nothing. `RawFrame` carries native BGRA
+precisely so the hot path can hand it to OpenCV without a per-pixel byte swap.
+
+Remaining bottleneck after ROI is the capture itself (~37ms). Pushing the ROI down
+into `SCStreamConfiguration.sourceRect` would help, but was left undone: it makes
+the frame's coordinate origin no longer the window origin, and this project has
+already been bitten once by exactly that class of bug.
 
 ## Testing Strategy
 Tests are organized by package functionality in the `tests/` directory, covering process management, screen capture, image comparison, and mouse simulation features. Tests include both unit tests and integration tests with appropriate platform-specific handling.

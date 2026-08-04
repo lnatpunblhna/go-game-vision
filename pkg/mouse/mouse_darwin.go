@@ -80,10 +80,127 @@ int isValidCoordinate(double x, double y) {
     getScreenSize(&width, &height);
     return (x >= 0 && y >= 0 && x < width && y < height) ? 1 : 0;
 }
+
+// Perform a drag: press at the start, emit motion along the path, release at the end.
+//
+// The intermediate kCGEventLeftMouseDragged events are the point of this function.
+// A press at A followed by a release at B is usually interpreted as a click,
+// because applications recognise dragging by observing motion while the button is
+// held — and a drag with no motion has none to observe.
+int performDrag(double startX, double startY,
+                double* pathX, double* pathY, int pathLen,
+                int button, int holdMS, int stepDelayMS) {
+    CGEventType downType, upType, dragType;
+    CGMouseButton mouseButton;
+
+    switch (button) {
+        case 0:
+            downType = kCGEventLeftMouseDown;
+            upType = kCGEventLeftMouseUp;
+            dragType = kCGEventLeftMouseDragged;
+            mouseButton = kCGMouseButtonLeft;
+            break;
+        case 1:
+            downType = kCGEventRightMouseDown;
+            upType = kCGEventRightMouseUp;
+            dragType = kCGEventRightMouseDragged;
+            mouseButton = kCGMouseButtonRight;
+            break;
+        case 2:
+            downType = kCGEventOtherMouseDown;
+            upType = kCGEventOtherMouseUp;
+            dragType = kCGEventOtherMouseDragged;
+            mouseButton = kCGMouseButtonCenter;
+            break;
+        default:
+            return -1;
+    }
+
+    CGEventRef down = CGEventCreateMouseEvent(NULL, downType,
+        CGPointMake(startX, startY), mouseButton);
+    if (down == NULL) return -2;
+    CGEventPost(kCGHIDEventTap, down);
+    CFRelease(down);
+
+    if (holdMS > 0) usleep(holdMS * 1000);
+
+    for (int i = 0; i < pathLen; i++) {
+        CGEventRef move = CGEventCreateMouseEvent(NULL, dragType,
+            CGPointMake(pathX[i], pathY[i]), mouseButton);
+        if (move == NULL) continue;
+        CGEventPost(kCGHIDEventTap, move);
+        CFRelease(move);
+        if (stepDelayMS > 0) usleep(stepDelayMS * 1000);
+    }
+
+    if (holdMS > 0) usleep(holdMS * 1000);
+
+    double endX = pathLen > 0 ? pathX[pathLen - 1] : startX;
+    double endY = pathLen > 0 ? pathY[pathLen - 1] : startY;
+    CGEventRef up = CGEventCreateMouseEvent(NULL, upType,
+        CGPointMake(endX, endY), mouseButton);
+    if (up == NULL) return -3;
+    CGEventPost(kCGHIDEventTap, up);
+    CFRelease(up);
+
+    return 0;
+}
+
+// Scroll by whole wheel notches at a point.
+//
+// The cursor is moved first: scroll events go to whatever is under the pointer,
+// so scrolling without positioning would hit whichever view happened to be there.
+// One notch per event rather than one event of N units, because large single
+// deltas are frequently coalesced into less movement than requested.
+int performScroll(double x, double y, int amount, int horizontal, int stepDelayMS) {
+    CGEventRef move = CGEventCreateMouseEvent(NULL, kCGEventMouseMoved,
+        CGPointMake(x, y), kCGMouseButtonLeft);
+    if (move != NULL) {
+        CGEventPost(kCGHIDEventTap, move);
+        CFRelease(move);
+    }
+
+    int steps = amount < 0 ? -amount : amount;
+    int direction = amount < 0 ? -1 : 1;
+
+    for (int i = 0; i < steps; i++) {
+        CGEventRef scroll;
+        if (horizontal) {
+            // Axis 2 is horizontal; it needs two axes to be declared.
+            scroll = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitLine, 2, 0, direction);
+        } else {
+            scroll = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitLine, 1, direction);
+        }
+        if (scroll == NULL) return -1;
+        CGEventPost(kCGHIDEventTap, scroll);
+        CFRelease(scroll);
+        if (stepDelayMS > 0) usleep(stepDelayMS * 1000);
+    }
+    return 0;
+}
+
+// Read the current cursor position in logical points.
+//
+// Needed by the emergency-stop watchdog, which polls for the cursor reaching a
+// screen corner. Creating a null event and reading its location is the standard
+// way to query this and, unlike an event tap, needs no Accessibility permission —
+// which matters for a safety mechanism that must work without extra setup.
+int getCursorPosition(double* x, double* y) {
+    CGEventRef event = CGEventCreate(NULL);
+    if (event == NULL) {
+        return -1;
+    }
+    CGPoint point = CGEventGetLocation(event);
+    CFRelease(event);
+    *x = point.x;
+    *y = point.y;
+    return 0;
+}
 */
 import "C"
 import (
 	"fmt"
+	"image"
 
 	"github.com/lnatpunblhna/go-game-vision/pkg/utils"
 )
@@ -172,4 +289,82 @@ func (d *DarwinMouseClicker) IsValidCoordinate(x, y int) bool {
 func (d *DarwinMouseClicker) PostMessageClick(hwnd uintptr, x, y int, options *ClickOptions) error {
 	return utils.WrapError(utils.ErrPlatformNotSupported,
 		"PostMessageClick is only available on Windows; use BackgroundClick on macOS")
+}
+
+// getPlatformCursorPosition reads the current cursor location in logical points,
+// the same coordinate space BackgroundClick accepts.
+func getPlatformCursorPosition() (int, int, error) {
+	var x, y C.double
+	if C.getCursorPosition(&x, &y) != 0 {
+		return 0, 0, utils.WrapError(utils.ErrPlatformNotSupported, "failed to read cursor position")
+	}
+	return int(x), int(y), nil
+}
+
+// dragPlatform performs a drag using CoreGraphics events.
+//
+// The intermediate kCGEventLeftMouseDragged events are what make this a drag
+// rather than two unrelated clicks: applications detect dragging by observing
+// motion while a button is held.
+func dragPlatform(from, to image.Point, opts *DragOptions) error {
+	buttonCode, err := darwinButtonCode(opts.button())
+	if err != nil {
+		return err
+	}
+
+	steps := opts.steps()
+	xs := make([]C.double, 0, steps+1)
+	ys := make([]C.double, 0, steps+1)
+	for i := 1; i <= steps; i++ {
+		p := interpolate(from, to, float64(i)/float64(steps))
+		xs = append(xs, C.double(p.X))
+		ys = append(ys, C.double(p.Y))
+	}
+	if len(xs) == 0 {
+		xs = append(xs, C.double(to.X))
+		ys = append(ys, C.double(to.Y))
+	}
+
+	ret := C.performDrag(
+		C.double(from.X), C.double(from.Y),
+		&xs[0], &ys[0], C.int(len(xs)),
+		C.int(buttonCode),
+		C.int(opts.holdMS()), C.int(opts.stepDelayMS()),
+	)
+	if ret != 0 {
+		return utils.WrapError(utils.ErrPlatformNotSupported,
+			fmt.Sprintf("drag failed with code %d", int(ret)))
+	}
+	return nil
+}
+
+// scrollPlatform scrolls using a CoreGraphics scroll wheel event.
+func scrollPlatform(x, y int, amount int, opts *ScrollOptions) error {
+	horizontal := 0
+	if opts.horizontal() {
+		horizontal = 1
+	}
+	ret := C.performScroll(
+		C.double(x), C.double(y),
+		C.int(amount), C.int(horizontal), C.int(opts.stepDelayMS()),
+	)
+	if ret != 0 {
+		return utils.WrapError(utils.ErrPlatformNotSupported,
+			fmt.Sprintf("scroll failed with code %d", int(ret)))
+	}
+	return nil
+}
+
+// darwinButtonCode maps a MouseButton to the integer the C helpers expect.
+func darwinButtonCode(button MouseButton) (int, error) {
+	switch button {
+	case LeftButton:
+		return 0, nil
+	case RightButton:
+		return 1, nil
+	case MiddleButton:
+		return 2, nil
+	default:
+		return 0, fmt.Errorf("unsupported mouse button: %v", button)
+	}
 }
