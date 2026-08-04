@@ -8,15 +8,21 @@ on:
 
 jobs:
   # Cross-platform compile & format guard. Does NOT need OpenCV because it only
-  # touches the non-cgo packages (process/capture/mouse/utils). This is exactly
+  # touches the non-gocv packages (process/capture/mouse/utils). This is exactly
   # the guard that catches "one platform stops compiling" regressions, e.g. an
   # interface method missing from a *_darwin.go / *_windows.go file.
+  #
+  # Scope note: capture/mouse are cgo-backed on darwin (Objective-C), and cross
+  # compiling from Linux runs with CGO_ENABLED=0, which drops every `import "C"`
+  # file from the build -- newPlatformCapture/newPlatformMouseClicker would then
+  # look undefined. Those two packages are therefore vetted for darwin in the
+  # macOS job (`go vet ./...`), not here.
   lint:
     name: Lint & cross-compile (non-cgo pkgs)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -27,12 +33,11 @@ jobs:
             echo "These files are not gofmt-formatted:"; echo "$unformatted"; exit 1
           fi
 
-      - name: Vet non-cgo packages for windows and darwin
-        run: |
-          for os in windows darwin; do
-            echo "== GOOS=$os =="
-            GOOS=$os go vet ./pkg/process/ ./pkg/capture/ ./pkg/mouse/ ./pkg/utils/
-          done
+      - name: Vet for windows (all non-gocv packages)
+        run: GOOS=windows go vet ./pkg/process/ ./pkg/capture/ ./pkg/mouse/ ./pkg/utils/
+
+      - name: Vet for darwin (pure-Go packages only)
+        run: GOOS=darwin go vet ./pkg/process/ ./pkg/utils/
 
   # macOS: full build + tests (OpenCV available via Homebrew, so the gocv-backed
   # image package and the offline unit tests run for real).
@@ -40,8 +45,8 @@ jobs:
     name: Build & test (macOS, OpenCV)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -65,8 +70,8 @@ jobs:
     name: Build (Windows, non-cgo pkgs)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
