@@ -56,7 +56,7 @@
 ### 前置要求
 - **Go**: 1.23 或更高版本
 - **系统**: Windows 10+ 或 macOS 10.14+
-- **OpenCV**: 图像处理功能依赖
+- **OpenCV**: 图像处理功能依赖,必须是 **4.x**(gocv 只支持 OpenCV 4,不支持 5.x)
 
 ### 快速安装
 
@@ -77,7 +77,13 @@ vcpkg install opencv4
 
 #### macOS
 ```bash
-brew install opencv
+# 注意:Homebrew 的 opencv 主 formula 已升级到 5.0.0,gocv 不支持,
+# 必须安装 opencv@4。它是 keg-only 的,需手动导出 pkgconfig 路径。
+brew install opencv@4 pkg-config
+export PKG_CONFIG_PATH="$(brew --prefix opencv@4)/lib/pkgconfig"
+
+# 验证(应输出 4.x 版本号)
+pkg-config --modversion opencv4
 ```
 
 ---

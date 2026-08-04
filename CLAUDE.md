@@ -77,9 +77,13 @@ Consequences to respect:
 - **golang.org/x/sys** - System calls for cross-platform functionality
 
 ## External Requirements
-- **OpenCV** must be installed on the system
+- **OpenCV 4.x** must be installed on the system. gocv wraps the OpenCV 4 C++ API
+  and does **not** support OpenCV 5 — the failure mode is
+  `Package 'opencv4' not found` from `pkg-config`.
   - Windows: vcpkg or pre-compiled binaries
-  - macOS: `brew install opencv`
+  - macOS: `brew install opencv@4` (the main `opencv` formula is 5.0.0 now and will
+    not work). It is keg-only, so export the pkgconfig dir before building:
+    `export PKG_CONFIG_PATH="$(brew --prefix opencv@4)/lib/pkgconfig"`
 
 ## Platform-Specific Notes
 

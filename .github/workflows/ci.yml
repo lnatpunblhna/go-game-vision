@@ -50,8 +50,18 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install OpenCV
-        run: brew install opencv pkg-config
+      # Must be opencv@4, NOT the `opencv` formula: Homebrew's main formula moved
+      # to OpenCV 5.0.0, which no longer ships opencv4.pc, while gocv only wraps
+      # the OpenCV 4 C++ API ("requires OpenCV 4.12.0" upstream). Building against
+      # the 5.x bottle fails with `Package 'opencv4' not found`.
+      # opencv@4 is keg-only, so its pkgconfig dir must be exported by hand.
+      - name: Install OpenCV 4
+        run: |
+          brew install opencv@4 pkg-config
+          echo "PKG_CONFIG_PATH=$(brew --prefix opencv@4)/lib/pkgconfig" >> "$GITHUB_ENV"
+
+      - name: Verify pkg-config sees opencv4
+        run: pkg-config --modversion opencv4
 
       - name: Build
         run: go build ./...
